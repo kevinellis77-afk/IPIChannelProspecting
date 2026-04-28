@@ -31,6 +31,26 @@ The file now includes:
 
 Use this sample as a stable benchmark when tuning threshold behavior.
 
+### Duplicate detection quality benchmark
+
+A fixed duplicate-quality test set is available at `data/duplicate_test_set.json` with known duplicate and known non-duplicate pairs.
+
+Run:
+
+```bash
+node scripts/duplicate_quality_audit.js
+```
+
+The audit validates:
+
+- domain normalization correctness
+- merge output integrity
+- no data loss in canonicalization unions
+- keep-separate behavior (`duplicate_status: rejected`)
+
+It also reports precision/recall/F1-style metrics for domain-key duplicate detection quality.
+
+
 ### How to refresh/export data
 
 1. Produce your latest source extract from your upstream system.

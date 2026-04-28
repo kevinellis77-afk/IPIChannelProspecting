@@ -38,6 +38,18 @@ If that request fails, it falls back to the inline compressed backup (`DATA_B64`
 
 - **Calibration filename:** `data/calibration_set.json`
 - **Purpose:** Fixed curated sample to validate scoring/ranking behavior after threshold tuning.
+
+### Duplicate quality sample file
+
+- **Duplicate QA filename:** `data/duplicate_test_set.json`
+- **Purpose:** Fixed known duplicate/non-duplicate benchmark for duplicate-detection quality checks.
+- **Validation script:** `node scripts/duplicate_quality_audit.js`
+- **Includes:**
+  - records (fixed input set)
+  - expected normalized domain keys
+  - known duplicate pairs / known non-duplicate pairs
+  - merge groups and keep-separate groups for behavior assertions
+
 - **Structure:**
   - `records` (array of sample companies)
   - `expected_order` (array of record ids in expected strongest-to-weakest order)
