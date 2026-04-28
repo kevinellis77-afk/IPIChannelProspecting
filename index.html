@@ -1654,6 +1654,10 @@
         </div>
         <div class="duplicates-toolbar">
           <button class="btn" onclick="autoMergeLowConflictGroups()">⚡ Auto-merge low-conflict groups</button>
+          <label style="display:inline-flex; align-items:center; gap:8px; font-size:12px; color:var(--text2); margin-left:8px;">
+            <input type="checkbox" id="showResolvedGroupsToggle" onchange="setShowResolvedDuplicateGroups(this.checked)">
+            Show resolved groups
+          </label>
         </div>
         <div id="duplicatesReviewContainer"></div>
       </div>
@@ -1745,6 +1749,7 @@ let activeOverlayCount = 0;
 let includeScoringAuditExport = false;
 let activeTab = 'explore';
 let pendingMergeConflictGroup = null;
+let showResolvedDuplicateGroups = false;
 
 const DEDUPE_DECISIONS_STORAGE_KEY = 'ukchannel_dedupe_decisions';
 const DUPLICATE_REVIEW_FIELDS = [
@@ -1776,6 +1781,7 @@ const LEGACY_OVERRIDES_STORAGE_KEY = 'ukchannel_overrides';
 const OVERRIDES_SCHEMA_VERSION = 1;
 const OVERRIDE_AUDIT_FIELDS = ['updated_at', 'updated_by', 'change_reason', 'source_note'];
 const DEDUPE_DECISION_BUCKETS = ['approved', 'rejected', 'manual'];
+const RESOLVED_DUPLICATE_STATUSES = new Set(['resolved', 'merged', 'canonical']);
 let dedupeDecisions = loadDedupeDecisionsFromStorage();
 let companyOverrides = loadCompanyOverridesFromStorage();
 let pendingOverrideImportMode = 'merge';
@@ -2363,10 +2369,9 @@ function rebuildDuplicateCandidateIndex() {
     .map(recordIds => [...recordIds])
     .filter(recordIds => recordIds.length > 1);
 
-  const resolvedStatuses = new Set(['resolved', 'merged', 'canonical']);
   const resolvedRecordIds = new Set(
     allData
-      .filter(record => resolvedStatuses.has(String(record.duplicate_status || '').trim().toLowerCase()))
+      .filter(record => RESOLVED_DUPLICATE_STATUSES.has(String(record.duplicate_status || '').trim().toLowerCase()))
       .map(record => record.id)
   );
   const unresolvedGroups = duplicateCandidates.filter(recordIds => !recordIds.every(id => resolvedRecordIds.has(id))).length;
@@ -2377,6 +2382,15 @@ function rebuildDuplicateCandidateIndex() {
     unresolvedGroups
   };
   updateDuplicateCandidateStatsUI();
+}
+
+function isResolvedDuplicateStatus(status) {
+  return RESOLVED_DUPLICATE_STATUSES.has(String(status || '').trim().toLowerCase());
+}
+
+function setShowResolvedDuplicateGroups(enabled) {
+  showResolvedDuplicateGroups = Boolean(enabled);
+  renderDuplicatesReview();
 }
 
 function updateDuplicateCandidateStatsUI() {
@@ -4641,6 +4655,8 @@ function collectDuplicateReviewGroups() {
     .map(recordIds => {
       const records = recordIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
       if (records.length < 2) return null;
+      const allResolved = records.every(record => isResolvedDuplicateStatus(record.duplicate_status));
+      if (allResolved && !showResolvedDuplicateGroups) return null;
       const conflicts = new Set();
       DUPLICATE_REVIEW_FIELDS.forEach(([field]) => {
         const values = [...new Set(records.map(record => normalizeComparisonValue(record[field])).filter(Boolean))];
@@ -4903,7 +4919,9 @@ function submitMergeConflictModal() {
 function renderDuplicatesReview() {
   const container = document.getElementById('duplicatesReviewContainer');
   const subtitle = document.getElementById('duplicatesSubtitle');
+  const showResolvedToggle = document.getElementById('showResolvedGroupsToggle');
   if (!container || !subtitle) return;
+  if (showResolvedToggle) showResolvedToggle.checked = showResolvedDuplicateGroups;
 
   const groups = collectDuplicateReviewGroups();
   subtitle.textContent = `${groups.length} duplicate groups`;
