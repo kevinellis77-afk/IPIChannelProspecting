@@ -1,0 +1,58 @@
+[
+  {
+    "id": 91001,
+    "name": "Northbridge Managed Services",
+    "expected_revenue_segment": "High",
+    "expected_score_band": "A",
+    "expected_tier": "Tier 1"
+  },
+  {
+    "id": 91002,
+    "name": "Delta Unified Comms",
+    "expected_revenue_segment": "Medium",
+    "expected_score_band": "B",
+    "expected_tier": "Tier 2"
+  },
+  {
+    "id": 91003,
+    "name": "Vertex Cloud Partners",
+    "expected_revenue_segment": "High",
+    "expected_score_band": "A",
+    "expected_tier": "Tier 1"
+  },
+  {
+    "id": 91004,
+    "name": "Harborline IT",
+    "expected_revenue_segment": "Low",
+    "expected_score_band": "C",
+    "expected_tier": "Tier 3"
+  },
+  {
+    "id": 91005,
+    "name": "Summit Security Integrators",
+    "expected_revenue_segment": "Medium",
+    "expected_score_band": "B",
+    "expected_tier": "Tier 2"
+  },
+  {
+    "id": 91006,
+    "name": "Pioneer Data Networks",
+    "expected_revenue_segment": "Low",
+    "expected_score_band": "C",
+    "expected_tier": "Tier 3"
+  },
+  {
+    "id": 91007,
+    "name": "Sterling Channel Group",
+    "expected_revenue_segment": "High",
+    "expected_score_band": "A",
+    "expected_tier": "Tier 1"
+  },
+  {
+    "id": 91008,
+    "name": "Bluecrest Telecom Solutions",
+    "expected_revenue_segment": "Medium",
+    "expected_score_band": "B",
+    "expected_tier": "Tier 2"
+  }
+]

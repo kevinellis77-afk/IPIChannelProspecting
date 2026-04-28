@@ -34,6 +34,17 @@ If that request fails, it falls back to the inline compressed backup (`DATA_B64`
 }
 ```
 
+### Calibration sample file
+
+- **Calibration filename:** `data/calibration_set.json`
+- **Purpose:** Small curated sample to validate scoring/tiering behavior after weight changes.
+- **Expected fields per calibration sample:**
+  - `id`
+  - `name`
+  - `expected_revenue_segment`
+  - `expected_score_band`
+  - `expected_tier`
+
 ### Required fields for safe filtering
 
 At minimum, each record should include:
@@ -64,3 +75,14 @@ The file must be available at a **relative path** from `index.html`:
 - GitHub Pages project site: `https://<org>.github.io/<repo>/data/ukchannel.json`
 
 Because `index.html` fetches `data/ukchannel.json` as a relative URL, avoid absolute URLs and ensure the `data/` folder is committed to the repository.
+
+## Manual calibration workflow
+
+Use this process whenever tuning model/heuristic weights:
+
+1. Run a fresh ranking and export/snapshot results.
+2. Review the **top 20** and **bottom 20** ranked accounts for obvious false positives/negatives.
+3. Cross-check those results with the curated samples in `data/calibration_set.json`.
+4. Adjust score weights and/or threshold cutoffs.
+5. Re-run ranking and verify expected calibration outputs.
+6. Re-validate reason-code explainability with channel sales stakeholders.

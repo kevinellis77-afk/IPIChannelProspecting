@@ -20,6 +20,17 @@ The app loads an external JSON dataset from `data/ukchannel.json` first, and onl
 
 See `data/README.md` for a representative object and extra implementation notes.
 
+### Calibration set for score tuning
+
+A small curated calibration set is available at `data/calibration_set.json` for manual score quality checks.  
+Each sample record includes expected:
+
+- `expected_revenue_segment`
+- `expected_score_band`
+- `expected_tier`
+
+Use these samples as fixed reference points when tuning scoring logic or score-to-tier thresholds.
+
 ### How to refresh/export data
 
 1. Produce your latest source extract from your upstream system.
@@ -38,3 +49,14 @@ The fetch path is relative (`data/ukchannel.json`), so both deployment modes sho
 - GitHub Pages project hosting: `https://<org>.github.io/<repo>/data/ukchannel.json`
 
 As long as the `data/` directory is committed at repo root, the same relative path works in both environments.
+
+## Manual calibration workflow
+
+When refining ranking quality, use this lightweight process:
+
+1. Generate the latest ranked account list from the app.
+2. Review the **top 20** and **bottom 20** ranked accounts against business expectations.
+3. Compare outcomes for calibration accounts in `data/calibration_set.json`.
+4. Adjust scoring weights/thresholds based on the observed mis-ranks.
+5. Re-run ranking and validate improvements against the same top/bottom slices.
+6. Re-validate reason-code explainability with channel sales stakeholders before finalizing changes.
