@@ -1190,33 +1190,46 @@ let filteredData = [];
 let selectedIds = new Set();
 let sortField = 'name';
 let sortAsc = true;
-function safeParseJSON(raw, fallback) {
-  try { return JSON.parse(raw); } catch (_) { return fallback; }
+function isValidStoredProspectList(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+  if (typeof entry.id !== 'number' || !Number.isFinite(entry.id) || entry.id <= 0) return false;
+  if (!Number.isInteger(entry.id)) return false;
+  if (typeof entry.name !== 'string' || !entry.name.trim()) return false;
+  if (!Array.isArray(entry.companyIds)) return false;
+  return entry.companyIds.every(companyId => (
+    typeof companyId === 'number' &&
+    Number.isFinite(companyId) &&
+    Number.isInteger(companyId) &&
+    companyId > 0
+  ));
 }
 
-function sanitizeProspectLists(rawLists) {
-  if (!Array.isArray(rawLists)) return [];
-  const clean = [];
-  const seenIds = new Set();
-  for (const entry of rawLists) {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
-    const id = Number(entry.id);
-    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
-    const companyIdsRaw = Array.isArray(entry.companyIds) ? entry.companyIds : [];
-    if (!Number.isFinite(id) || id <= 0 || !name) continue;
-    if (seenIds.has(id)) continue;
-    const companyIds = [...new Set(companyIdsRaw
-      .map(v => Number(v))
-      .filter(v => Number.isFinite(v) && v > 0))];
-    clean.push({ id, name, companyIds });
-    seenIds.add(id);
+function loadProspectListsFromStorage() {
+  const STORAGE_KEY = 'ukchannel_lists';
+  const safeDefault = [];
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return safeDefault;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.every(isValidStoredProspectList)) {
+      throw new Error('Invalid schema');
+    }
+
+    // normalize for uniqueness + trimmed names while preserving valid shape
+    return parsed.map(list => ({
+      id: list.id,
+      name: list.name.trim(),
+      companyIds: [...new Set(list.companyIds)]
+    }));
+  } catch (_) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(safeDefault));
+    toast('Saved prospect lists were invalid and have been reset.');
+    return safeDefault;
   }
-  return clean;
 }
 
-let prospectLists = sanitizeProspectLists(
-  safeParseJSON(localStorage.getItem('ukchannel_lists') || '[]', [])
-);
+let prospectLists = loadProspectListsFromStorage();
 let listedFilter = 'any'; // 'any' | 'yes' | 'no'
 
 // Returns array of list names a company belongs to
