@@ -4802,6 +4802,9 @@ function applyDuplicateGroupDecision(recordIds, decision, options = {}) {
   rebuildEffectiveDataAndScores();
   applyFilters();
   renderDuplicatesReview();
+  if (decision === 'keep-separate') {
+    toast(`Kept ${records.length} records separate`);
+  }
 }
 
 function autoMergeLowConflictGroups() {
@@ -4926,13 +4929,10 @@ function renderDuplicatesReview() {
     domain.textContent = group.domainKey;
     const meta = document.createElement('div');
     meta.className = 'duplicate-meta';
-    const statusLabel = group.decision === 'merge'
-      ? 'Merged'
-      : group.decision === 'keep-separate'
-        ? 'Keep separate'
-        : group.decision === 'defer'
-          ? 'Deferred'
-          : 'Not reviewed';
+    const decisionLabel = group.decision === 'pending' ? 'not-reviewed' : group.decision;
+    const statusParts = [decisionLabel];
+    if (group.needsManualReview) statusParts.push('Needs manual review');
+    const statusLabel = statusParts.join(' • ');
     const statusClass = group.decision === 'defer' ? 'status-defer' : (group.decision === 'pending' ? 'status-pending' : '');
     meta.innerHTML = `${group.records.length} records • ${group.conflicts.size} conflicting fields • Status: <span class="duplicate-status ${statusClass}">${statusLabel}</span>`;
     left.appendChild(domain);
