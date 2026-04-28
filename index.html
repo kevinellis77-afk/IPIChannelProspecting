@@ -2946,6 +2946,10 @@ const HUBSPOT_FIELDS = [
   ['Country/Region', 'country'], ['Industry', 'industry'], ['Number of Employees', 'employees'],
   ['Phone Number', 'phone'], ['LinkedIn Company Page', 'linkedin'],
   ['Channel Role', 'channel_role'], ['Channel Segment', 'channel_segment'],
+  ['Priority Score', r => getExportScoringData(r).priorityScore],
+  ['Priority Tier', r => getExportScoringData(r).priorityTier],
+  ['Revenue Segment', r => getExportScoringData(r).revenueSegment],
+  ['Top Reason Codes', r => getExportScoringData(r).topReasonCodes],
   ['Technology Stack', r => r.tech_stack.join('; ')],
   ['Partner Ecosystem', r => r.partners.join('; ')],
   ['Adopter Profile', 'adopter_profile'], ['Credit Rating', 'credit_description'],
@@ -2964,6 +2968,27 @@ function toCSVRow(row) {
   }).join(',');
 }
 
+function getExportScoringData(record) {
+  const score = companyScoreMap.get(record.id) || record.prospectScore || computeProspectScore(record);
+  const explicitReasonCodes = Array.isArray(record.top_reason_codes)
+    ? record.top_reason_codes
+    : typeof record.top_reason_codes === 'string'
+      ? record.top_reason_codes.split(/[;,|]/).map(reason => reason.trim()).filter(Boolean)
+      : [];
+  const reasonCodes = explicitReasonCodes.length
+    ? explicitReasonCodes
+    : Array.isArray(score.reasonCodes)
+      ? score.reasonCodes
+      : [];
+
+  return {
+    priorityScore: score.totalScore ?? 0,
+    priorityTier: score.priorityTier || 'P4',
+    revenueSegment: classifyRevenueBand(record.revenue),
+    topReasonCodes: reasonCodes.join('; ')
+  };
+}
+
 function downloadCSV(filename, rows) {
   const blob = new Blob([rows.join('\n')], {type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
@@ -2980,9 +3005,10 @@ function buildCSVRows(companies) {
     'Dir 1 Name','Dir 1 Role','Dir 1 Email','Dir 1 Email Status',
     'Dir 2 Name','Dir 2 Role','Dir 2 Email',
     'Dir 3 Name','Dir 3 Role','Dir 3 Email',
-    'Companies House Link'];
+    'Companies House Link','Priority Score','Priority Tier','Revenue Segment','Top Reason Codes'];
   const rows = [toCSVRow(headers)];
   companies.forEach(r => {
+    const scoringData = getExportScoringData(r);
     rows.push(toCSVRow([
       r.name, r.industry, r.channel_role, r.channel_segment, r.employees,
       r.city, r.country, r.website, r.domain, r.email_pattern, r.phone, r.email, r.linkedin,
@@ -2992,7 +3018,7 @@ function buildCSVRows(companies) {
       [r.dir1_first, r.dir1_last].filter(Boolean).join(' '), r.dir1_role, r.dir1_email, r.dir1_email_status,
       [r.dir2_first, r.dir2_last].filter(Boolean).join(' '), r.dir2_role, r.dir2_email,
       [r.dir3_first, r.dir3_last].filter(Boolean).join(' '), r.dir3_role, r.dir3_email,
-      r.ch_link
+      r.ch_link, scoringData.priorityScore, scoringData.priorityTier, scoringData.revenueSegment, scoringData.topReasonCodes
     ]));
   });
   return rows;
