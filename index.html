@@ -1579,6 +1579,8 @@ let filteredData = [];
 let selectedIds = new Set();
 let companyScoreMap = new Map();
 let domainRecordIndex = new Map();
+let canonicalEntityIndex = new Map();
+let recordToCanonicalEntityId = new Map();
 let duplicateCandidates = [];
 let duplicateCandidateStats = {
   totalGroups: 0,
@@ -1838,6 +1840,208 @@ function buildEffectiveRecord(baseRecord) {
   return effectiveRecord;
 }
 
+function mostFrequentNonEmpty(values) {
+  const counts = new Map();
+  values.forEach(value => {
+    const clean = sanitizeSafeText(value);
+    if (!clean) return;
+    const key = clean.toLowerCase();
+    const current = counts.get(key) || { value: clean, count: 0 };
+    current.count += 1;
+    if (clean.length > current.value.length) current.value = clean;
+    counts.set(key, current);
+  });
+  if (counts.size === 0) return '';
+  return [...counts.values()]
+    .sort((a, b) => (b.count - a.count) || (b.value.length - a.value.length))[0]
+    .value;
+}
+
+function chooseLongestLegalName(values) {
+  const legalNameRegex = /^[\w\s&.,'’()\-\/]+$/;
+  const legal = values
+    .map(value => sanitizeSafeText(value))
+    .filter(value => value && legalNameRegex.test(value));
+  if (!legal.length) return '';
+  return legal.sort((a, b) => b.length - a.length)[0];
+}
+
+function parseEmployeeBandHigh(input) {
+  const text = sanitizeSafeText(input);
+  if (!text) return 0;
+  if (text.includes('+')) {
+    const n = Number(text.replace(/[^0-9]/g, ''));
+    return Number.isFinite(n) ? n : 0;
+  }
+  const nums = text.match(/\d+/g);
+  if (!nums || nums.length === 0) return 0;
+  const highs = nums.map(n => Number(n)).filter(Number.isFinite);
+  return highs.length ? Math.max(...highs) : 0;
+}
+
+function isValidHttpsUrl(value) {
+  const parsed = normalizeUrlField(value);
+  if (parsed.error || !parsed.value) return false;
+  try {
+    const url = new URL(parsed.value);
+    return url.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
+function uniqueCaseInsensitive(items) {
+  const seen = new Set();
+  const out = [];
+  items.forEach(item => {
+    const clean = sanitizeSafeText(item);
+    if (!clean) return;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(clean);
+  });
+  return out;
+}
+
+function buildCanonicalEntityFromRecords(records, options = {}) {
+  if (!Array.isArray(records) || records.length === 0) return null;
+
+  const sourceIds = records.map(record => record.id).filter(id => id !== null && id !== undefined);
+  const canonicalId = `entity:${records[0].domain_key || records[0].id}`;
+  const fieldProvenance = {};
+
+  const withSource = (field, value, sourceRecordId) => {
+    fieldProvenance[field] = sourceRecordId;
+    return value;
+  };
+
+  const names = records.map(record => record.name).filter(Boolean);
+  const frequentName = mostFrequentNonEmpty(names);
+  const fallbackName = chooseLongestLegalName(names);
+  const selectedName = frequentName || fallbackName || `Entity ${records[0].id}`;
+  const selectedNameSource = records.find(record => sanitizeSafeText(record.name).toLowerCase() === selectedName.toLowerCase())?.id || records[0].id;
+
+  const revenueMode = options.revenueMode === 'user-selected' && Number.isFinite(Number(options.revenueSourceRecordId))
+    ? 'user-selected'
+    : 'highest-recent';
+  let selectedRevenueRecord = records[0];
+  if (revenueMode === 'user-selected') {
+    selectedRevenueRecord = records.find(record => record.id === Number(options.revenueSourceRecordId)) || selectedRevenueRecord;
+  } else {
+    selectedRevenueRecord = records
+      .filter(record => Number.isFinite(Number(record.revenue)) && Number(record.revenue) > 0)
+      .sort((a, b) => Number(b.year_founded || 0) - Number(a.year_founded || 0) || Number(b.revenue || 0) - Number(a.revenue || 0))[0] || records[0];
+  }
+
+  const employeeMode = options.employeeMode === 'user-selected' && Number.isFinite(Number(options.employeeSourceRecordId))
+    ? 'user-selected'
+    : 'largest-band';
+  let selectedEmployeeRecord = records[0];
+  if (employeeMode === 'user-selected') {
+    selectedEmployeeRecord = records.find(record => record.id === Number(options.employeeSourceRecordId)) || selectedEmployeeRecord;
+  } else {
+    selectedEmployeeRecord = records
+      .filter(record => sanitizeSafeText(record.employees))
+      .sort((a, b) => parseEmployeeBandHigh(b.employees) - parseEmployeeBandHigh(a.employees))[0] || records[0];
+  }
+
+  const contactsByEmail = new Map();
+  records.forEach(record => {
+    const emailCandidates = [record.dir1_email, record.company_email]
+      .map(value => sanitizeSafeText(value).toLowerCase())
+      .filter(Boolean);
+    if (emailCandidates.length === 0) {
+      const noEmailKey = `record-${record.id}`;
+      if (!contactsByEmail.has(noEmailKey)) {
+        contactsByEmail.set(noEmailKey, {
+          name: sanitizeSafeText(`${record.dir1_first || ''} ${record.dir1_last || ''}`),
+          role: sanitizeSafeText(record.dir1_role),
+          email: '',
+          source_record_id: record.id
+        });
+      }
+      return;
+    }
+
+    emailCandidates.forEach(email => {
+      if (!contactsByEmail.has(email)) {
+        contactsByEmail.set(email, {
+          name: sanitizeSafeText(`${record.dir1_first || ''} ${record.dir1_last || ''}`),
+          role: sanitizeSafeText(record.dir1_role),
+          email,
+          source_record_id: record.id
+        });
+      }
+    });
+  });
+
+  const linkFields = ['website', 'linkedin', 'ch_link'];
+  const links = {};
+  linkFields.forEach(field => {
+    const httpsSource = records.find(record => isValidHttpsUrl(record[field]));
+    const anySource = records.find(record => normalizeUrlField(record[field]).value);
+    const selectedSource = httpsSource || anySource;
+    if (selectedSource) {
+      const normalized = normalizeUrlField(selectedSource[field]);
+      links[field] = withSource(`links.${field}`, normalized.value || '', selectedSource.id);
+    } else {
+      links[field] = '';
+    }
+  });
+
+  const canonical = {
+    canonical_entity_id: canonicalId,
+    domain_key: records[0].domain_key || '',
+    child_source_record_ids: uniqueCaseInsensitive(sourceIds.map(String)).map(Number),
+    merge_policies: {
+      name: 'most-frequent-non-empty-else-longest-legal',
+      revenue: revenueMode,
+      employees: employeeMode,
+      tech_stack: 'union-deduplicated',
+      partners: 'union-deduplicated',
+      contacts: 'union-email-collapse',
+      links: 'prefer-valid-https'
+    },
+    name: withSource('name', selectedName, selectedNameSource),
+    revenue: withSource('revenue', Number(selectedRevenueRecord.revenue) || 0, selectedRevenueRecord.id),
+    employees: withSource('employees', sanitizeSafeText(selectedEmployeeRecord.employees), selectedEmployeeRecord.id),
+    tech_stack: uniqueCaseInsensitive(records.flatMap(record => Array.isArray(record.tech_stack) ? record.tech_stack : [])),
+    partners: uniqueCaseInsensitive(records.flatMap(record => Array.isArray(record.partners) ? record.partners : [])),
+    contacts: [...contactsByEmail.values()],
+    links,
+    field_provenance: fieldProvenance
+  };
+
+  return canonical;
+}
+
+function rebuildCanonicalEntityIndex() {
+  const groups = new Map();
+  allData.forEach(record => {
+    if (!record) return;
+    const key = record.domain_key || `record:${record.id}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(record);
+  });
+
+  canonicalEntityIndex = new Map();
+  recordToCanonicalEntityId = new Map();
+
+  groups.forEach(records => {
+    const canonical = buildCanonicalEntityFromRecords(records);
+    if (!canonical) return;
+    canonicalEntityIndex.set(canonical.canonical_entity_id, canonical);
+    records.forEach(record => recordToCanonicalEntityId.set(record.id, canonical.canonical_entity_id));
+  });
+}
+
+function getCanonicalEntityByRecordId(recordId) {
+  const canonicalId = recordToCanonicalEntityId.get(recordId);
+  if (!canonicalId) return null;
+  return canonicalEntityIndex.get(canonicalId) || null;
+}
+
 function rebuildEffectiveDataAndScores() {
   allData = baseData.map(buildEffectiveRecord);
   companyScoreMap = new Map(
@@ -1849,7 +2053,9 @@ function rebuildEffectiveDataAndScores() {
     })
   );
   rebuildDuplicateCandidateIndex();
+  rebuildCanonicalEntityIndex();
 }
+
 
 function rebuildDuplicateCandidateIndex() {
   const nextIndex = new Map();
@@ -4720,6 +4926,7 @@ function linkedInCustomSearch(companyName, recordId) {
 // INIT
 // ============================================================
 loadData();
+window.getCanonicalEntityByRecordId = getCanonicalEntityByRecordId;
 </script>
 </body>
 </html>
