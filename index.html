@@ -1710,8 +1710,10 @@
 let baseData = [];
 let allData = [];
 let filteredData = [];
+let canonicalData = [];
 let selectedIds = new Set();
 let companyScoreMap = new Map();
+let canonicalScoreMap = new Map();
 let domainRecordIndex = new Map();
 let canonicalEntityIndex = new Map();
 let recordToCanonicalEntityId = new Map();
@@ -2247,6 +2249,31 @@ function buildCanonicalEntityFromRecords(records, options = {}) {
   return canonical;
 }
 
+function chooseCanonicalAnchorRecord(records = []) {
+  if (!Array.isArray(records) || records.length === 0) return null;
+  return records.find(record => String(record.duplicate_status || '').toLowerCase() === 'canonical')
+    || records[0];
+}
+
+function buildCanonicalDisplayRecord(canonicalEntity, records = []) {
+  if (!canonicalEntity || !Array.isArray(records) || records.length === 0) return null;
+  const anchor = chooseCanonicalAnchorRecord(records);
+  if (!anchor) return null;
+
+  const canonicalRecord = { ...anchor };
+  canonicalRecord.name = canonicalEntity.name || canonicalRecord.name;
+  canonicalRecord.revenue = Number(canonicalEntity.revenue) || 0;
+  canonicalRecord.employees = canonicalEntity.employees || canonicalRecord.employees;
+  canonicalRecord.tech_stack = Array.isArray(canonicalEntity.tech_stack) ? canonicalEntity.tech_stack.slice() : [];
+  canonicalRecord.partners = Array.isArray(canonicalEntity.partners) ? canonicalEntity.partners.slice() : [];
+  canonicalRecord.canonical_entity_id = canonicalEntity.canonical_entity_id;
+  canonicalRecord.child_source_record_ids = Array.isArray(canonicalEntity.child_source_record_ids)
+    ? canonicalEntity.child_source_record_ids.slice()
+    : [anchor.id];
+  canonicalRecord.source_legal_entities = uniqueCaseInsensitive(records.map(record => record.name));
+  return canonicalRecord;
+}
+
 function rebuildCanonicalEntityIndex() {
   const groups = new Map();
   allData.forEach(record => {
@@ -2258,12 +2285,15 @@ function rebuildCanonicalEntityIndex() {
 
   canonicalEntityIndex = new Map();
   recordToCanonicalEntityId = new Map();
+  canonicalData = [];
 
   groups.forEach(records => {
     const canonical = buildCanonicalEntityFromRecords(records);
     if (!canonical) return;
     canonicalEntityIndex.set(canonical.canonical_entity_id, canonical);
     records.forEach(record => recordToCanonicalEntityId.set(record.id, canonical.canonical_entity_id));
+    const canonicalRecord = buildCanonicalDisplayRecord(canonical, records);
+    if (canonicalRecord) canonicalData.push(canonicalRecord);
   });
 }
 
@@ -2275,16 +2305,25 @@ function getCanonicalEntityByRecordId(recordId) {
 
 function rebuildEffectiveDataAndScores() {
   allData = baseData.map(buildEffectiveRecord);
-  companyScoreMap = new Map(
-    allData.map(company => {
+  rebuildDuplicateCandidateIndex();
+  rebuildCanonicalEntityIndex();
+  canonicalScoreMap = new Map(
+    canonicalData.map(company => {
       const score = computeProspectScore(company);
       company.totalScore = score.totalScore;
       company.prospectScore = score;
+      return [company.canonical_entity_id, score];
+    })
+  );
+  companyScoreMap = new Map(
+    allData.map(company => {
+      const canonicalId = recordToCanonicalEntityId.get(company.id);
+      const score = canonicalId ? canonicalScoreMap.get(canonicalId) : computeProspectScore(company);
+      company.totalScore = score?.totalScore ?? 0;
+      company.prospectScore = score || null;
       return [company.id, score];
     })
   );
-  rebuildDuplicateCandidateIndex();
-  rebuildCanonicalEntityIndex();
 }
 
 
@@ -2472,13 +2511,37 @@ function loadProspectListsFromStorage() {
 let prospectLists = loadProspectListsFromStorage();
 let listedFilter = 'any'; // 'any' | 'yes' | 'no'
 
+function getPrimaryEntityRows() {
+  return canonicalData.slice();
+}
+
+function getCanonicalChildIds(companyLike) {
+  if (companyLike && Array.isArray(companyLike.child_source_record_ids) && companyLike.child_source_record_ids.length) {
+    return companyLike.child_source_record_ids.slice();
+  }
+  if (companyLike && companyLike.id != null) return [companyLike.id];
+  return [];
+}
+
+function getCanonicalCompanyLists(companyLike) {
+  const childIds = getCanonicalChildIds(companyLike);
+  if (!childIds.length) return [];
+  return prospectLists
+    .filter(list => childIds.some(id => list.companyIds.includes(id)))
+    .map(list => list.name);
+}
+
 // Returns array of list names a company belongs to
 function getCompanyLists(companyId) {
+  const record = typeof companyId === 'object' && companyId !== null ? companyId : getEffectiveRecordById(companyId);
+  if (record) return getCanonicalCompanyLists(record);
   return prospectLists.filter(l => l.companyIds.includes(companyId)).map(l => l.name);
 }
 
 // Returns true if company is in ANY prospect list
 function isListed(companyId) {
+  const record = typeof companyId === 'object' && companyId !== null ? companyId : getEffectiveRecordById(companyId);
+  if (record) return getCanonicalCompanyLists(record).length > 0;
   return prospectLists.some(l => l.companyIds.includes(companyId));
 }
 
@@ -2513,7 +2576,7 @@ async function loadData() {
     loadingEl.style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     document.getElementById('app').style.flexDirection = 'column';
-    document.getElementById('totalCount').textContent = allData.length.toLocaleString();
+    document.getElementById('totalCount').textContent = canonicalData.length.toLocaleString();
     buildFilterChips();
     applyFilters();
   } catch (err) {
@@ -3059,6 +3122,11 @@ function computeProspectScore(r) {
 
 function getScoreForRecord(record) {
   if (!record) return { totalScore: 0, priorityTier: 'P4', subscores: {}, reasonCodes: [], contributions: [] };
+  const canonicalId = record.canonical_entity_id || recordToCanonicalEntityId.get(record.id);
+  if (canonicalId) {
+    const canonicalScore = canonicalScoreMap.get(canonicalId);
+    if (canonicalScore) return canonicalScore;
+  }
   const existing = companyScoreMap.get(record.id);
   if (existing) return existing;
   const computed = record.prospectScore || computeProspectScore(record);
@@ -3081,10 +3149,11 @@ function buildChips(containerId, values, filterKey, extraClass='') {
 }
 
 function buildFilterChips() {
+  const chipRows = getPrimaryEntityRows();
   buildChips('chips-role', ['Reseller','Distributor','Vendor','Wholesaler','Consultant'], 'role');
-  buildChips('chips-segment', uniq(allData.map(r=>r.channel_segment)).sort(), 'segment');
+  buildChips('chips-segment', uniq(chipRows.map(r=>r.channel_segment)).sort(), 'segment');
   
-  const industries = uniq(allData.map(r=>r.industry)).sort();
+  const industries = uniq(chipRows.map(r=>r.industry)).sort();
   buildChips('chips-industry', industries, 'industry');
   
   buildChips('chips-size', EMPLOYEE_ORDER, 'size');
@@ -3218,7 +3287,7 @@ function applyFilters() {
   const search = document.getElementById('searchInput').value.toLowerCase();
   activeFilters.search = search;
 
-  const primaryViewData = allData.filter(record => String(record.duplicate_status || '').toLowerCase() !== 'merged');
+  const primaryViewData = getPrimaryEntityRows();
   filteredData = primaryViewData.filter(r => {
     if (search) {
       const hay = `${r.name} ${r.domain} ${r.city} ${r.county} ${r.keywords}`.toLowerCase();
@@ -3250,8 +3319,8 @@ function applyFilters() {
     const revenueSegment = classifyRevenueBand(r.revenue);
     if (activeFilters.revenue_segment.size && !activeFilters.revenue_segment.has(revenueSegment)) return false;
     // Listed status filter
-    if (listedFilter === 'yes' && !isListed(r.id)) return false;
-    if (listedFilter === 'no' && isListed(r.id)) return false;
+    if (listedFilter === 'yes' && !isListed(r)) return false;
+    if (listedFilter === 'no' && isListed(r)) return false;
     // AI intelligent search filter
     if (aiFilterFn) {
       try { if (!aiFilterFn(r)) return false; } catch(e) { /* skip bad eval */ }
@@ -3402,7 +3471,7 @@ function renderTable() {
     const dir1 = r.dir1_first ? `${r.dir1_first} ${r.dir1_last || ''}`.trim() : '';
     const creditClass = creditColors[r.credit_description] || 'badge-grey';
     const roleClass = roleColors[r.channel_role] || 'badge-grey';
-    const companyLists = getCompanyLists(r.id);
+    const companyLists = getCompanyLists(r);
     const inList = companyLists.length > 0;
     const revenueSegment = classifyRevenueBand(r.revenue);
     const score = getScoreForRecord(r);
@@ -3660,7 +3729,7 @@ function updateAddToListBtn() {
 // ============================================================
 function rowClick(event, id) {
   if (event.target.type === 'checkbox') return;
-  const r = allData.find(d => d.id === id);
+  const r = getPrimaryEntityRows().find(d => d.id === id);
   if (!r) return;
   showDetail(r);
 }
@@ -3837,7 +3906,7 @@ function renderDetailBody(r) {
   const listSection = mkSection('Prospect Lists');
   const chips = document.createElement('div');
   chips.style.display = 'flex'; chips.style.flexWrap = 'wrap'; chips.style.gap = '6px';
-  const companyLists = getCompanyLists(r.id);
+  const companyLists = getCompanyLists(r);
   if (companyLists.length) {
     companyLists.forEach(name => {
       const list = prospectLists.find(l => l.name === name);
@@ -3859,7 +3928,8 @@ function renderDetailBody(r) {
   }
   listSection.appendChild(chips);
 
-  const availableLists = prospectLists.filter(l => !l.companyIds.includes(r.id));
+  const sourceIdsForLists = getCanonicalChildIds(r);
+  const availableLists = prospectLists.filter(l => !sourceIdsForLists.some(id => l.companyIds.includes(id)));
   if (availableLists.length > 0) {
     const addWrap = document.createElement('div');
     addWrap.style.display = 'flex'; addWrap.style.gap = '6px'; addWrap.style.marginTop = '8px'; addWrap.style.alignItems = 'center';
@@ -3897,6 +3967,35 @@ function renderDetailBody(r) {
   addRow(companySection, 'Adopter', r.adopter_profile || '—');
   addRow(companySection, 'Trading Status', r.trading_status || '—');
   colA.appendChild(companySection);
+
+  const canonicalSection = mkSection('Canonical View');
+  const canonicalEntity = getCanonicalEntityByRecordId(r.id);
+  addRow(canonicalSection, 'Canonical Entity ID', canonicalEntity?.canonical_entity_id || '—');
+  addRow(canonicalSection, 'Canonical Domain Key', canonicalEntity?.domain_key || r.domain_key || '—');
+  addRow(canonicalSection, 'Source Records', String(canonicalEntity?.child_source_record_ids?.length || 1));
+
+  const sourceLegalWrap = document.createElement('details');
+  sourceLegalWrap.style.marginTop = '8px';
+  const sourceSummary = document.createElement('summary');
+  sourceSummary.className = 'detail-key';
+  sourceSummary.style.cursor = 'pointer';
+  sourceSummary.textContent = 'Source legal entities';
+  sourceLegalWrap.appendChild(sourceSummary);
+  const sourceList = document.createElement('div');
+  sourceList.style.marginTop = '8px';
+  sourceList.style.display = 'grid';
+  sourceList.style.gap = '6px';
+  const sourceNames = Array.isArray(r.source_legal_entities) ? r.source_legal_entities : [r.name];
+  sourceNames.forEach(name => {
+    const item = document.createElement('div');
+    item.className = 'detail-val';
+    item.style.textAlign = 'left';
+    item.textContent = name || '—';
+    sourceList.appendChild(item);
+  });
+  sourceLegalWrap.appendChild(sourceList);
+  canonicalSection.appendChild(sourceLegalWrap);
+  colA.appendChild(canonicalSection);
 
   const finSection = mkSection('Financials');
   addRow(finSection, 'Credit Score', String(r.credit_score || '—'));
@@ -4405,11 +4504,15 @@ function addToListFromSidebar(companyId) {
   if (!sel || !sel.value) return;
   const listId = parseInt(sel.value);
   const list = prospectLists.find(l => l.id === listId);
-  if (!list || list.companyIds.includes(companyId)) return;
-  list.companyIds.push(companyId);
+  const company = getPrimaryEntityRows().find(row => row.id === companyId) || getEffectiveRecordById(companyId);
+  const candidateIds = getCanonicalChildIds(company);
+  if (!list || candidateIds.length === 0) return;
+  candidateIds.forEach(id => {
+    if (!list.companyIds.includes(id)) list.companyIds.push(id);
+  });
   saveLists();
   // Re-render detail panel in place
-  const r = getEffectiveRecordById(companyId);
+  const r = getPrimaryEntityRows().find(row => row.id === companyId) || getEffectiveRecordById(companyId);
   if (r) renderDetailBody(r);
   toast(`Added to "${list.name}"`);
 }
@@ -4418,10 +4521,12 @@ function addToListFromSidebar(companyId) {
 function removeFromListById(listId, companyId) {
   const list = prospectLists.find(l => l.id === listId);
   if (!list) return;
-  list.companyIds = list.companyIds.filter(id => id !== companyId);
+  const company = getPrimaryEntityRows().find(row => row.id === companyId) || getEffectiveRecordById(companyId);
+  const removeIds = new Set(getCanonicalChildIds(company));
+  list.companyIds = list.companyIds.filter(id => !removeIds.has(id));
   saveLists();
   // Re-render detail panel in place
-  const r = getEffectiveRecordById(companyId);
+  const r = getPrimaryEntityRows().find(row => row.id === companyId) || getEffectiveRecordById(companyId);
   if (r) renderDetailBody(r);
   renderLists();
   toast(`Removed from "${list.name}"`);
@@ -4821,7 +4926,8 @@ function showAddToList() {
       meta.style.fontSize = '11px';
       meta.style.color = 'var(--text3)';
       meta.style.fontFamily = "'DM Mono',monospace";
-      meta.textContent = `${l.companyIds.length} companies`;
+      const canonicalCompanyCount = dedupeCanonicalRows(l.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean)).length;
+      meta.textContent = `${canonicalCompanyCount} companies`;
       left.appendChild(name);
       left.appendChild(meta);
 
@@ -4843,7 +4949,13 @@ function addToList(listId) {
   if (!list) return;
   let added = 0;
   selectedIds.forEach(id => {
-    if (!list.companyIds.includes(id)) { list.companyIds.push(id); added++; }
+    const company = getPrimaryEntityRows().find(row => row.id === id) || getEffectiveRecordById(id);
+    getCanonicalChildIds(company).forEach(sourceId => {
+      if (!list.companyIds.includes(sourceId)) {
+        list.companyIds.push(sourceId);
+        added += 1;
+      }
+    });
   });
   saveLists();
   renderTable();
@@ -4880,7 +4992,7 @@ function renderLists() {
     return;
   }
   prospectLists.forEach(list => {
-    const companies = list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
+    const companies = dedupeCanonicalRows(list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean));
     const card = document.createElement('div');
     card.className = 'prospect-list-card';
 
@@ -5053,6 +5165,20 @@ function downloadCSV(filename, rows) {
   URL.revokeObjectURL(url);
 }
 
+function dedupeCanonicalRows(records) {
+  const seen = new Set();
+  const out = [];
+  records.forEach(record => {
+    if (!record) return;
+    const canonicalId = record.canonical_entity_id || recordToCanonicalEntityId.get(record.id) || `record:${record.id}`;
+    if (seen.has(canonicalId)) return;
+    seen.add(canonicalId);
+    const canonicalRow = getPrimaryEntityRows().find(row => (row.canonical_entity_id || row.id) === canonicalId) || record;
+    out.push(canonicalRow);
+  });
+  return out;
+}
+
 function buildCSVRows(companies) {
   const headers = ['Organisation','Industry','Channel Role','Channel Segment','Employees','City','Country',
     'Website','Domain','Email Pattern','Phone','Company Email','LinkedIn',
@@ -5104,34 +5230,38 @@ function buildHubspotRows(companies) {
 }
 
 function exportCSV(type) {
-  const companies = type === 'filtered' ? filteredData : allData.filter(d => selectedIds.has(d.id));
+  const companies = type === 'filtered'
+    ? filteredData
+    : dedupeCanonicalRows([...selectedIds].map(id => getPrimaryEntityRows().find(row => row.id === id)).filter(Boolean));
   downloadCSV('ukchannel_export.csv', buildCSVRows(companies));
   toast(`Exported ${companies.length} companies`);
 }
 
 function exportHubspot() {
-  const companies = selectedIds.size > 0 ? allData.filter(d => selectedIds.has(d.id)) : filteredData;
+  const companies = selectedIds.size > 0
+    ? dedupeCanonicalRows([...selectedIds].map(id => getPrimaryEntityRows().find(row => row.id === id)).filter(Boolean))
+    : filteredData;
   downloadCSV('ukchannel_hubspot.csv', buildHubspotRows(companies));
   toast(`HubSpot CSV: ${companies.length} companies`);
 }
 
 function exportListCSV(listId) {
   const list = prospectLists.find(l => l.id === listId);
-  const companies = list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
+  const companies = dedupeCanonicalRows(list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean));
   downloadCSV(`${list.name.replace(/[^a-z0-9]/gi,'_')}.csv`, buildCSVRows(companies));
   toast(`Exported "${list.name}"`);
 }
 
 function exportListHubspot(listId) {
   const list = prospectLists.find(l => l.id === listId);
-  const companies = list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
+  const companies = dedupeCanonicalRows(list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean));
   downloadCSV(`${list.name.replace(/[^a-z0-9]/gi,'_')}_hubspot.csv`, buildHubspotRows(companies));
   toast(`HubSpot CSV: "${list.name}"`);
 }
 
 function mailtoList(listId) {
   const list = prospectLists.find(l => l.id === listId);
-  const companies = list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
+  const companies = dedupeCanonicalRows(list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean));
   const emails = companies.map(c => c.dir1_email || c.email).filter(e => e && e.includes('@'));
   if (emails.length === 0) { toast('No emails found in this list'); return; }
   const chunks = [];
