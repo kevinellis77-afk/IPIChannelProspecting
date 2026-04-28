@@ -2672,6 +2672,7 @@ function fmt(n) {
 }
 
 function showDetail(r) {
+  document.getElementById('detailSidebar').dataset.companyId = String(r.id);
   document.getElementById('modalTitle').textContent = r.name;
   document.getElementById('modalSubtitle').textContent = `${r.industry || ''} ${r.city ? '· ' + r.city : ''} ${r.country ? '· ' + r.country : ''}`;
 
@@ -2747,15 +2748,34 @@ function saveRecordEdits(recordId, event) {
   }
 
   saveRecordOverride(recordId, normalized);
+  handleRecordSaveRefresh(recordId, { toastMessage: 'Saved ✓ Changes are now reflected in table, details, filters, and exports.' });
+}
+
+function handleRecordSaveRefresh(recordId, { toastMessage = 'Saved ✓ Changes applied.' } = {}) {
   rebuildEffectiveDataAndScores();
   const record = getEffectiveRecordById(recordId);
   if (!record) return;
 
+  // Rebuild chips to reflect edited field values, then re-apply active chip states.
   buildFilterChips();
+  syncChipStateFromFilters();
+  updateChipCounts();
+
+  // Re-run filtering/sorting so row placement updates when score/filter-relevant fields change.
   applyFilters();
-  renderDetailBody(record);
-  document.getElementById('modalSubtitle').textContent = `${record.industry || ''} ${record.city ? '· ' + record.city : ''} ${record.country ? '· ' + record.country : ''}`;
-  toast('Company details updated');
+
+  // Refresh detail panel content if it is open for this record.
+  const detailSidebar = document.getElementById('detailSidebar');
+  const modalTitle = document.getElementById('modalTitle');
+  const detailOpen = detailSidebar.classList.contains('open');
+  const showingSameRecord = detailOpen && Number(detailSidebar.dataset.companyId) === Number(recordId);
+  if (showingSameRecord) {
+    modalTitle.textContent = record.name;
+    document.getElementById('modalSubtitle').textContent = `${record.industry || ''} ${record.city ? '· ' + record.city : ''} ${record.country ? '· ' + record.country : ''}`;
+    renderDetailBody(record);
+  }
+
+  toast(toastMessage);
 }
 
 function renderDetailBody(r) {
@@ -3229,16 +3249,8 @@ function saveEditedCompany(event) {
 
   editedFields.email = editedFields.company_email;
   saveRecordOverride(companyId, editedFields);
-  rebuildEffectiveDataAndScores();
-
-  const updatedCompany = getEffectiveRecordById(companyId);
-  if (!updatedCompany) return;
-  document.getElementById('modalTitle').textContent = updatedCompany.name;
-  document.getElementById('modalSubtitle').textContent = `${updatedCompany.industry || ''} ${updatedCompany.city ? '· ' + updatedCompany.city : ''} ${updatedCompany.country ? '· ' + updatedCompany.country : ''}`;
   closeEditCompanyModalDirect();
-  applyFilters();
-  renderDetailBody(updatedCompany);
-  toast('Company updated');
+  handleRecordSaveRefresh(companyId, { toastMessage: 'Saved ✓ Company updated successfully.' });
 }
 
 function closeModal(event) {
@@ -3248,6 +3260,7 @@ function closeModalDirect() {
   const panel = document.getElementById('detailSidebar');
   if (!panel.classList.contains('open')) return;
   panel.classList.remove('open');
+  delete panel.dataset.companyId;
   unlockBodyScroll();
 }
 
