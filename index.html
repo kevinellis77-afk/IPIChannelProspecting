@@ -1457,6 +1457,10 @@
           <option value="revenue">Sort: Revenue ↑</option>
           <option value="credit">Sort: Credit Score ↑</option>
         </select>
+        <label class="selection-scope-note" style="display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="includeScoringAuditExport" onchange="setIncludeScoringAuditExport(this.checked)">
+          Include scoring audit field
+        </label>
         <button class="btn" onclick="exportCSV('filtered')">⬇ Export Filtered</button>
         <button class="btn" onclick="exportHubspot()">⬇ HubSpot CSV</button>
         <button class="btn" onclick="exportOverridesFile()">⬇ Overrides JSON</button>
@@ -1563,6 +1567,7 @@ let filteredData = [];
 let selectedIds = new Set();
 let companyScoreMap = new Map();
 let activeOverlayCount = 0;
+let includeScoringAuditExport = false;
 
 const OVERRIDES_STORAGE_KEY = 'ukchannel_overrides';
 const OVERRIDES_SCHEMA_VERSION = 1;
@@ -1609,6 +1614,10 @@ function loadCompanyOverridesFromStorage() {
 
 function saveCompanyOverridesToStorage() {
   localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(companyOverrides));
+}
+
+function setIncludeScoringAuditExport(enabled) {
+  includeScoringAuditExport = Boolean(enabled);
 }
 
 function getAllowedOverrideFields() {
@@ -2346,9 +2355,17 @@ function computeCreditAdjustment(creditScore, creditDescription) {
   return clampRange(Math.round(adjustment), -2, 2);
 }
 
+function formatContribution(points, dimensionLabel, message, lowImpact = false) {
+  const value = Number(points) || 0;
+  const sign = value >= 0 ? '+' : '';
+  const suffix = lowImpact ? ' (low-impact)' : '';
+  return `${sign}${value} ${dimensionLabel}: ${message}${suffix}`;
+}
+
 function computeProspectScore(r) {
   const dims = SCORING_CONFIG.maxPoints;
   const reasons = [];
+  const contributions = [];
   const subscores = {
     revenue: 0,
     employeeScale: 0,
@@ -2363,16 +2380,22 @@ function computeProspectScore(r) {
   const channelRole = String(r.channel_role || '').toLowerCase();
   const channelSegment = String(r.channel_segment || '').toLowerCase();
   const creditDescription = String(r.credit_description || '').toLowerCase();
+  const addContribution = (dimension, points, message, options = {}) => {
+    contributions.push(formatContribution(points, dimension, message, options.lowImpact));
+  };
 
   if (r.revenue >= SCORING_CONFIG.thresholds.revenueBands.enterpriseMin) {
     subscores.revenue = 30;
     reasons.push('Enterprise revenue band');
+    addContribution('Revenue', 30, 'Enterprise revenue band');
   } else if (r.revenue >= SCORING_CONFIG.thresholds.revenueBands.midMarketMin) {
     subscores.revenue = 20;
     reasons.push('Mid-market revenue band');
+    addContribution('Revenue', 20, 'Mid-market revenue band');
   } else if (r.revenue > 0) {
     subscores.revenue = 10;
     reasons.push('SMB revenue band');
+    addContribution('Revenue', 10, 'SMB revenue band');
   }
 
   if (['5000+','1001-5000'].includes(r.employees)) subscores.employeeScale = 15;
@@ -2381,9 +2404,14 @@ function computeProspectScore(r) {
   else if (r.employees === '51-200') subscores.employeeScale = 8;
   else if (r.employees === '11-50') subscores.employeeScale = 6;
   else if (['1-10','6-10','1-5'].includes(r.employees)) subscores.employeeScale = 4;
+  if (subscores.employeeScale > 0) addContribution('Scale', subscores.employeeScale, `Employee band ${r.employees || 'Unknown'}`);
   if (subscores.employeeScale >= 10) reasons.push('Larger employee base');
 
   subscores.creditQuality = computeCreditAdjustment(r.credit_score, creditDescription);
+  if (subscores.creditQuality !== 0) {
+    const creditText = r.credit_description || 'Credit data';
+    addContribution('Credit', subscores.creditQuality, creditText, { lowImpact: Math.abs(subscores.creditQuality) <= 1 });
+  }
   if (subscores.creditQuality >= 1) reasons.push('Strong credit profile');
   else if (subscores.creditQuality <= -1) reasons.push('Credit risk flagged');
 
@@ -2402,6 +2430,9 @@ function computeProspectScore(r) {
   if (channelSegment.includes('enterprise')) ecosystemBreadth += 0.25;
   const partnerSignalStrength = strategicVendorStrength + strategicVendorQuality + Math.min(2, ecosystemBreadth);
   subscores.partnerSignals = scoreParallelBand(partnerSignalStrength);
+  if (subscores.partnerSignals > 0) {
+    addContribution('Partners', subscores.partnerSignals, `${strategicVendorMatches.length} strategic partner matches`);
+  }
   if (subscores.partnerSignals >= 7.5) reasons.push('Strong strategic partner ecosystem');
 
   const coreTechSignals = ['ucaas', 'ccaas', 'telephony', 'teams'];
@@ -2431,6 +2462,15 @@ function computeProspectScore(r) {
   } else {
     subscores.technologySignals = 2;
   }
+  if (subscores.technologySignals > 0) {
+    const uniqueCoreSignals = [...new Set(matchedCoreSignals.map(s => s.toUpperCase()))];
+    const techEvidence = uniqueCoreSignals.length
+      ? `${uniqueCoreSignals.join(' + ')} detected`
+      : matchedComplementarySignals.length
+        ? `${[...new Set(matchedComplementarySignals)].join(' + ')} signals detected`
+        : 'Limited stack evidence';
+    addContribution('Tech', subscores.technologySignals, techEvidence, { lowImpact: subscores.technologySignals <= 6 });
+  }
   if (subscores.technologySignals >= 8) reasons.push('Relevant modern tech stack');
 
   let adopterProfileStrength = 0;
@@ -2456,6 +2496,10 @@ function computeProspectScore(r) {
       : 0;
   const adoptionSignalStrength = adopterProfileStrength + modernizationCoreStrength + modernizationBreadthBonus;
   subscores.adoptionReadiness = scoreParallelBand(adoptionSignalStrength);
+  if (subscores.adoptionReadiness > 0) {
+    const modernizationCount = uniqueModernizationMatches.length;
+    addContribution('Adoption', subscores.adoptionReadiness, `${modernizationCount} modernization indicators`);
+  }
   if (subscores.adoptionReadiness >= 7.5) reasons.push('High modernization adoption readiness');
 
   Object.keys(subscores).forEach(key => {
@@ -2474,8 +2518,9 @@ function computeProspectScore(r) {
   else if (totalScore >= SCORING_CONFIG.priorityTierCutoffs.tier3) priorityTier = 'P3';
 
   if (!reasons.length) reasons.push('Limited qualification signals');
+  if (!contributions.length) contributions.push(formatContribution(0, 'Score', 'Limited qualification signals', true));
 
-  return { totalScore, subscores, priorityTier, reasonCodes: reasons.slice(0, 5) };
+  return { totalScore, subscores, priorityTier, reasonCodes: reasons.slice(0, 5), contributions };
 }
 
 const EMPLOYEE_ORDER = ['1-5','1-10','6-10','11-50','51-200','201-500','501-1000','1001-5000','5000+'];
@@ -3361,6 +3406,21 @@ function renderDetailBody(r) {
   });
   scoringSection.appendChild(reasonsWrap);
 
+  const contributionWrap = document.createElement('div');
+  contributionWrap.style.marginTop = '10px';
+  const contributionLabel = document.createElement('div');
+  contributionLabel.className = 'detail-key';
+  contributionLabel.style.marginBottom = '6px';
+  contributionLabel.textContent = 'Dimension contributions';
+  contributionWrap.appendChild(contributionLabel);
+  (score.contributions || []).forEach(entry => {
+    const chip = document.createElement('span');
+    chip.className = 'reason-chip';
+    chip.textContent = entry;
+    contributionWrap.appendChild(chip);
+  });
+  scoringSection.appendChild(contributionWrap);
+
   const displacementWrap = document.createElement('div');
   displacementWrap.style.marginTop = '10px';
   const displacementLabel = document.createElement('div');
@@ -4067,7 +4127,8 @@ function getExportScoringData(record) {
     priorityScore: score.totalScore ?? 0,
     priorityTier: score.priorityTier || 'P4',
     revenueSegment: classifyRevenueBand(record.revenue),
-    topReasonCodes: reasonCodes.join('; ')
+    topReasonCodes: reasonCodes.join('; '),
+    scoringAuditTrail: Array.isArray(score.contributions) ? score.contributions.join(' | ') : ''
   };
 }
 
@@ -4088,10 +4149,11 @@ function buildCSVRows(companies) {
     'Dir 2 Name','Dir 2 Role','Dir 2 Email',
     'Dir 3 Name','Dir 3 Role','Dir 3 Email',
     'Companies House Link','Priority Score','Priority Tier','Revenue Segment','Top Reason Codes'];
+  if (includeScoringAuditExport) headers.push('Scoring Audit Trail');
   const rows = [toCSVRow(headers)];
   companies.forEach(r => {
     const scoringData = getExportScoringData(r);
-    rows.push(toCSVRow([
+    const rowValues = [
       r.name, r.industry, r.channel_role, r.channel_segment, r.employees,
       r.city, r.country, r.website, r.domain, r.email_pattern, r.phone, r.email, r.linkedin,
       r.credit_score, r.credit_description, r.credit_limit, r.revenue, r.net_worth,
@@ -4101,16 +4163,21 @@ function buildCSVRows(companies) {
       [r.dir2_first, r.dir2_last].filter(Boolean).join(' '), r.dir2_role, r.dir2_email,
       [r.dir3_first, r.dir3_last].filter(Boolean).join(' '), r.dir3_role, r.dir3_email,
       r.ch_link, scoringData.priorityScore, scoringData.priorityTier, scoringData.revenueSegment, scoringData.topReasonCodes
-    ]));
+    ];
+    if (includeScoringAuditExport) rowValues.push(scoringData.scoringAuditTrail);
+    rows.push(toCSVRow(rowValues));
   });
   return rows;
 }
 
 function buildHubspotRows(companies) {
-  const headers = HUBSPOT_FIELDS.map(f => f[0]);
+  const fields = includeScoringAuditExport
+    ? [...HUBSPOT_FIELDS, ['Scoring Audit Trail', r => getExportScoringData(r).scoringAuditTrail]]
+    : HUBSPOT_FIELDS;
+  const headers = fields.map(f => f[0]);
   const rows = [toCSVRow(headers)];
   companies.forEach(r => {
-    rows.push(toCSVRow(HUBSPOT_FIELDS.map(([,getter]) => {
+    rows.push(toCSVRow(fields.map(([,getter]) => {
       return typeof getter === 'function' ? getter(r) : r[getter];
     })));
   });
