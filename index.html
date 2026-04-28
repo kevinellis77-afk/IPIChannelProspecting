@@ -499,6 +499,25 @@
   .badge-gold { background: rgba(255,215,0,0.15); color: var(--gold); }
   .badge-purple { background: rgba(155,89,182,0.15); color: var(--purple); }
   .badge-red { background: rgba(255,71,87,0.15); color: var(--danger); }
+  .badge-tier-p1 { background: #ffd166; color: #241800; border: 1px solid #ffb703; }
+  .badge-tier-p2 { background: #06d6a0; color: #022b1f; border: 1px solid #03a87c; }
+  .badge-tier-p3 { background: #4cc9f0; color: #04253a; border: 1px solid #2aa6ce; }
+  .badge-tier-p4 { background: #b5bfcf; color: #1d2737; border: 1px solid #8f9bb0; }
+  .score-strong {
+    color: var(--accent);
+    font-weight: 700;
+    font-family: 'DM Mono', monospace;
+  }
+  .reason-chip {
+    display: inline-block;
+    margin: 2px 4px 2px 0;
+    padding: 2px 8px;
+    font-size: 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border2);
+    background: var(--surface2);
+    color: var(--text2);
+  }
 
   .tech-tag {
     display: inline-block;
@@ -1278,6 +1297,8 @@
           <option value="name">Sort: Name A–Z</option>
           <option value="name_desc">Sort: Name Z–A</option>
           <option value="totalScore">Sort: Total Score ↓</option>
+          <option value="priorityTier">Sort: Priority Tier (P1→P4)</option>
+          <option value="revenueSegment">Sort: Revenue Segment</option>
           <option value="employees">Sort: Employees ↑</option>
           <option value="revenue">Sort: Revenue ↑</option>
           <option value="credit">Sort: Credit Score ↑</option>
@@ -1293,7 +1314,10 @@
               <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'name')" onclick="sortBy('name')">Company</th>
               <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'industry')" onclick="sortBy('industry')">Industry</th>
               <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'channel_role')" onclick="sortBy('channel_role')">Role</th>
-              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'channel_segment')" onclick="sortBy('channel_segment')">Segment</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'channel_segment')" onclick="sortBy('channel_segment')">Channel Segment</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'totalScore')" onclick="sortBy('totalScore')">Priority Score</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'priorityTier')" onclick="sortBy('priorityTier')">Tier</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'revenueSegment')" onclick="sortBy('revenueSegment')">Revenue Segment</th>
               <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'employees')" onclick="sortBy('employees')">Size</th>
               <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'credit_description')" onclick="sortBy('credit_description')">Credit</th>
               <th>Tech Stack</th>
@@ -1750,10 +1774,10 @@ function computeProspectScore(r) {
 
   const totalScore = clampScore(Object.values(subscores).reduce((sum, val) => sum + val, 0), 100);
 
-  let priorityTier = 'Tier 4';
-  if (totalScore >= SCORING_CONFIG.priorityTierCutoffs.tier1) priorityTier = 'Tier 1';
-  else if (totalScore >= SCORING_CONFIG.priorityTierCutoffs.tier2) priorityTier = 'Tier 2';
-  else if (totalScore >= SCORING_CONFIG.priorityTierCutoffs.tier3) priorityTier = 'Tier 3';
+  let priorityTier = 'P4';
+  if (totalScore >= SCORING_CONFIG.priorityTierCutoffs.tier1) priorityTier = 'P1';
+  else if (totalScore >= SCORING_CONFIG.priorityTierCutoffs.tier2) priorityTier = 'P2';
+  else if (totalScore >= SCORING_CONFIG.priorityTierCutoffs.tier3) priorityTier = 'P3';
 
   if (!reasons.length) reasons.push('Limited qualification signals');
 
@@ -1898,6 +1922,17 @@ function applyFilters() {
       vb = companyScoreMap.get(b.id)?.totalScore ?? b.totalScore ?? 0;
       return (vb - va);
     }
+    if (sortSel === 'priorityTier') {
+      va = tierRank(companyScoreMap.get(a.id)?.priorityTier || 'P4');
+      vb = tierRank(companyScoreMap.get(b.id)?.priorityTier || 'P4');
+      return va - vb;
+    }
+    if (sortSel === 'revenueSegment') {
+      const revenueOrder = { 'Enterprise': 1, 'Mid-Market': 2, 'SMB': 3, 'Unknown': 4 };
+      va = revenueOrder[classifyRevenueBand(a.revenue)] || 5;
+      vb = revenueOrder[classifyRevenueBand(b.revenue)] || 5;
+      return va - vb;
+    }
     if (sortSel === 'employees') {
       va = empMap[a.employees] ?? 99; vb = empMap[b.employees] ?? 99;
     } else if (sortSel === 'revenue') {
@@ -1961,6 +1996,36 @@ function classifyRevenueBand(revenue) {
   return 'SMB';
 }
 
+function tierBadgeClass(tier) {
+  if (tier === 'P1') return 'badge-tier-p1';
+  if (tier === 'P2') return 'badge-tier-p2';
+  if (tier === 'P3') return 'badge-tier-p3';
+  return 'badge-tier-p4';
+}
+
+function tierRank(tier) {
+  if (tier === 'P1') return 1;
+  if (tier === 'P2') return 2;
+  if (tier === 'P3') return 3;
+  return 4;
+}
+
+function getDisplacementFlags(company, score) {
+  const flags = [];
+  const partners = Array.isArray(company.partners) ? company.partners.map(p => String(p || '').toUpperCase()) : [];
+  const techStack = Array.isArray(company.tech_stack) ? company.tech_stack.map(t => String(t || '').toLowerCase()) : [];
+  const hasLegacyVendor = partners.some(p => ['AVAYA', 'MITEL', 'BT'].includes(p));
+  const hasModernCloudSignal = techStack.some(t => t.includes('cloud') || t.includes('ccaas') || t.includes('ucaas') || t.includes('teams'));
+  const weakCredit = Number(company.credit_score || 0) > 0 && Number(company.credit_score || 0) < 50;
+
+  if (hasLegacyVendor) flags.push('Legacy telephony vendor footprint');
+  if (hasModernCloudSignal) flags.push('Modern cloud communications signal');
+  if (score?.subscores?.partnerSignals >= 8) flags.push('High-value incumbent partnerships');
+  if (score?.subscores?.technologySignals >= 8) flags.push('Mature comms tech stack');
+  if (weakCredit) flags.push('Credit risk caution');
+  return flags.slice(0, 4);
+}
+
 function renderTable() {
   const tbody = document.getElementById('tableBody');
   const toShow = filteredData.slice(0, pageShown);
@@ -1982,6 +2047,7 @@ function renderTable() {
     const companyLists = getCompanyLists(r.id);
     const inList = companyLists.length > 0;
     const revenueSegment = classifyRevenueBand(r.revenue);
+    const score = companyScoreMap.get(r.id) || r.prospectScore || computeProspectScore(r);
 
     const tr = document.createElement('tr');
     if (sel) tr.classList.add('selected');
@@ -2022,10 +2088,31 @@ function renderTable() {
     tr.appendChild(tdRole);
 
     const tdSeg = document.createElement('td');
-    tdSeg.setAttribute('data-label', 'Segment');
-    tdSeg.title = revenueSegment;
-    tdSeg.textContent = revenueSegment;
+    tdSeg.setAttribute('data-label', 'Channel Segment');
+    tdSeg.title = r.channel_segment || '';
+    tdSeg.textContent = r.channel_segment || '—';
     tr.appendChild(tdSeg);
+
+    const tdPriorityScore = document.createElement('td');
+    tdPriorityScore.setAttribute('data-label', 'Priority Score');
+    const scoreBadge = document.createElement('span');
+    scoreBadge.className = 'score-strong';
+    scoreBadge.textContent = String(score.totalScore ?? 0);
+    tdPriorityScore.appendChild(scoreBadge);
+    tr.appendChild(tdPriorityScore);
+
+    const tdTier = document.createElement('td');
+    tdTier.setAttribute('data-label', 'Tier');
+    const tierBadge = document.createElement('span');
+    tierBadge.className = `badge ${tierBadgeClass(score.priorityTier)}`;
+    tierBadge.textContent = score.priorityTier || 'P4';
+    tdTier.appendChild(tierBadge);
+    tr.appendChild(tdTier);
+
+    const tdRevenueSeg = document.createElement('td');
+    tdRevenueSeg.setAttribute('data-label', 'Revenue Segment');
+    tdRevenueSeg.textContent = revenueSegment;
+    tr.appendChild(tdRevenueSeg);
 
     const tdEmp = document.createElement('td');
     tdEmp.setAttribute('data-label', 'Size');
@@ -2109,7 +2196,7 @@ function renderTable() {
   // Lazy load more
   if (filteredData.length > pageShown) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="12" style="text-align:center; padding:16px;">
+    tr.innerHTML = `<td colspan="15" style="text-align:center; padding:16px;">
       <button class="btn" onclick="loadMore()">Load more (${filteredData.length - pageShown} remaining)</button>
     </td>`;
     tbody.appendChild(tr);
@@ -2322,6 +2409,79 @@ function renderDetailBody(r) {
   addRow(finSection, 'Revenue', fmt(r.revenue));
   addRow(finSection, 'Net Worth', fmt(r.net_worth));
   colA.appendChild(finSection);
+
+  const score = companyScoreMap.get(r.id) || r.prospectScore || computeProspectScore(r);
+  const scoringSection = mkSection('Prospect Scoring');
+  addRow(scoringSection, 'Total Score', `${score.totalScore}/100`);
+  const tierNode = document.createElement('span');
+  tierNode.className = `badge ${tierBadgeClass(score.priorityTier)}`;
+  tierNode.textContent = score.priorityTier;
+  addRow(scoringSection, 'Priority Tier', tierNode);
+
+  const breakdownWrap = document.createElement('div');
+  breakdownWrap.style.display = 'grid';
+  breakdownWrap.style.gap = '4px';
+  Object.entries(score.subscores || {}).forEach(([key, value]) => {
+    const row = document.createElement('div');
+    row.className = 'detail-row';
+    const k = document.createElement('span');
+    k.className = 'detail-key';
+    k.textContent = SCORING_CONFIG.dimensions[key] || key;
+    const v = document.createElement('span');
+    v.className = 'detail-val';
+    v.textContent = `${value}/${SCORING_CONFIG.maxPoints[key] || 0}`;
+    row.appendChild(k);
+    row.appendChild(v);
+    breakdownWrap.appendChild(row);
+  });
+  const breakdownSection = document.createElement('div');
+  breakdownSection.style.marginTop = '10px';
+  const breakdownLabel = document.createElement('div');
+  breakdownLabel.className = 'detail-key';
+  breakdownLabel.style.marginBottom = '6px';
+  breakdownLabel.textContent = 'Sub-score breakdown';
+  breakdownSection.appendChild(breakdownLabel);
+  breakdownSection.appendChild(breakdownWrap);
+  scoringSection.appendChild(breakdownSection);
+
+  const reasonsWrap = document.createElement('div');
+  reasonsWrap.style.marginTop = '10px';
+  const reasonsLabel = document.createElement('div');
+  reasonsLabel.className = 'detail-key';
+  reasonsLabel.style.marginBottom = '6px';
+  reasonsLabel.textContent = 'Top reason codes';
+  reasonsWrap.appendChild(reasonsLabel);
+  (score.reasonCodes || []).slice(0, 3).forEach(reason => {
+    const chip = document.createElement('span');
+    chip.className = 'reason-chip';
+    chip.textContent = reason;
+    reasonsWrap.appendChild(chip);
+  });
+  scoringSection.appendChild(reasonsWrap);
+
+  const displacementWrap = document.createElement('div');
+  displacementWrap.style.marginTop = '10px';
+  const displacementLabel = document.createElement('div');
+  displacementLabel.className = 'detail-key';
+  displacementLabel.style.marginBottom = '6px';
+  displacementLabel.textContent = 'Displacement opportunity flags';
+  displacementWrap.appendChild(displacementLabel);
+  const displacementFlags = getDisplacementFlags(r, score);
+  if (displacementFlags.length) {
+    displacementFlags.forEach(flag => {
+      const chip = document.createElement('span');
+      chip.className = 'reason-chip';
+      chip.textContent = flag;
+      displacementWrap.appendChild(chip);
+    });
+  } else {
+    const none = document.createElement('span');
+    none.className = 'detail-val';
+    none.textContent = 'No active displacement flags';
+    displacementWrap.appendChild(none);
+  }
+  scoringSection.appendChild(displacementWrap);
+  colA.appendChild(scoringSection);
 
   const linksSection = mkSection('Contact & Links');
   if (r.website) {
