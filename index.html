@@ -992,6 +992,21 @@
     display: grid;
     gap: 4px;
   }
+  .edit-field-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .field-reset-btn {
+    border: none;
+    background: none;
+    color: var(--accent2);
+    font-size: 10px;
+    font-family: 'DM Mono', monospace;
+    cursor: pointer;
+    padding: 0;
+    opacity: 0.85;
+  }
+  .field-reset-btn:hover { opacity: 1; text-decoration: underline; }
   .edit-form-field.full {
     grid-column: 1 / -1;
   }
@@ -3210,6 +3225,39 @@ function toEditableNumber(value) {
   return Number.isFinite(n) ? String(n) : '';
 }
 
+function hasOverrideField(recordId, fieldKey) {
+  return Object.prototype.hasOwnProperty.call(companyOverrides[String(recordId)] || {}, fieldKey);
+}
+
+function resetCompanyFieldToSource(recordId, fieldKey) {
+  if (!fieldKey || OVERRIDE_AUDIT_FIELDS.includes(fieldKey)) return;
+  const baseRecord = getBaseRecordById(recordId);
+  if (!baseRecord) return;
+
+  saveRecordOverride(recordId, { [fieldKey]: baseRecord[fieldKey] }, {
+    updated_by: 'Restore action',
+    change_reason: `Reset field to source: ${fieldKey}`
+  });
+  handleRecordSaveRefresh(recordId, { toastMessage: `Reset ✓ ${fieldKey} restored from source.` });
+  const refreshed = getEffectiveRecordById(recordId);
+  if (refreshed) renderEditCompanyForm(refreshed);
+}
+
+function resetAllCompanyOverrides(recordId) {
+  if (!companyOverrides[String(recordId)]) {
+    toast('No overrides found for this company.');
+    return;
+  }
+  const confirmed = window.confirm('Reset all overrides for this company and restore all source values?');
+  if (!confirmed) return;
+
+  delete companyOverrides[String(recordId)];
+  saveCompanyOverridesToStorage();
+  handleRecordSaveRefresh(recordId, { toastMessage: 'Reset ✓ All overrides cleared for this company.' });
+  const refreshed = getEffectiveRecordById(recordId);
+  if (refreshed) renderEditCompanyForm(refreshed);
+}
+
 function renderEditCompanyForm(company) {
   const form = document.getElementById('editCompanyForm');
   if (!form) return;
@@ -3248,6 +3296,20 @@ function renderEditCompanyForm(company) {
       }
       fieldWrap.appendChild(label);
       fieldWrap.appendChild(input);
+      if (!OVERRIDE_AUDIT_FIELDS.includes(field.key)) {
+        const actionWrap = document.createElement('div');
+        actionWrap.className = 'edit-field-actions';
+        const resetBtn = document.createElement('button');
+        resetBtn.type = 'button';
+        resetBtn.className = 'field-reset-btn';
+        resetBtn.textContent = 'Reset to source';
+        resetBtn.disabled = !hasOverrideField(company.id, field.key);
+        resetBtn.style.opacity = resetBtn.disabled ? '0.35' : '';
+        resetBtn.style.cursor = resetBtn.disabled ? 'default' : '';
+        resetBtn.addEventListener('click', () => resetCompanyFieldToSource(company.id, field.key));
+        actionWrap.appendChild(resetBtn);
+        fieldWrap.appendChild(actionWrap);
+      }
       grid.appendChild(fieldWrap);
     });
     wrap.appendChild(grid);
@@ -3261,11 +3323,18 @@ function renderEditCompanyForm(company) {
   cancelBtn.className = 'btn';
   cancelBtn.textContent = 'Cancel';
   cancelBtn.addEventListener('click', closeEditCompanyModalDirect);
+  const resetAllBtn = document.createElement('button');
+  resetAllBtn.type = 'button';
+  resetAllBtn.className = 'btn';
+  resetAllBtn.textContent = 'Reset all overrides';
+  resetAllBtn.disabled = !companyOverrides[String(company.id)];
+  resetAllBtn.addEventListener('click', () => resetAllCompanyOverrides(company.id));
   const saveBtn = document.createElement('button');
   saveBtn.type = 'submit';
   saveBtn.className = 'btn primary';
   saveBtn.textContent = 'Save';
   actions.appendChild(cancelBtn);
+  actions.appendChild(resetAllBtn);
   actions.appendChild(saveBtn);
   form.appendChild(actions);
 }
