@@ -1,0 +1,156 @@
+{
+  "records": [
+    {
+      "id": 101,
+      "name": "Acme Telecom Ltd",
+      "domain": "https://www.acme.co.uk/",
+      "industry": "Voice",
+      "country": "ENGLAND",
+      "employees": "51-200",
+      "revenue": 1500000,
+      "year_founded": 2012,
+      "tech_stack": ["UCaaS", "Microsoft 365"],
+      "partners": ["MICROSOFT", "Gamma"],
+      "website": "http://acme.co.uk",
+      "linkedin": "linkedin.com/company/acme-telecom"
+    },
+    {
+      "id": 102,
+      "name": "ACME Telecom",
+      "domain": "acme.co.uk",
+      "industry": "Voice",
+      "country": "ENGLAND",
+      "employees": "11-50",
+      "revenue": 900000,
+      "year_founded": 2008,
+      "tech_stack": ["Teams", "UCaaS"],
+      "partners": ["microsoft", "BT"],
+      "website": "https://www.acme.co.uk/contact",
+      "linkedin": "https://linkedin.com/company/acme-telecom"
+    },
+    {
+      "id": 103,
+      "name": "ACME Northern Branch",
+      "domain": "http://acme.co.uk:443/about",
+      "industry": "Voice",
+      "country": "SCOTLAND",
+      "employees": "1-10",
+      "revenue": 150000,
+      "year_founded": 2020,
+      "tech_stack": ["CCaaS"],
+      "partners": ["Gamma"],
+      "website": "acme.co.uk",
+      "linkedin": "http://linkedin.com/company/acme-telecom"
+    },
+    {
+      "id": 104,
+      "name": "Beta IT Services",
+      "domain": "betait.co.uk",
+      "industry": "IT Services",
+      "country": "ENGLAND",
+      "employees": "11-50",
+      "revenue": 300000,
+      "year_founded": 2017,
+      "tech_stack": ["Cloud Services"],
+      "partners": ["Cisco"],
+      "website": "https://betait.co.uk"
+    },
+    {
+      "id": 105,
+      "name": "Beta Consulting",
+      "domain": "beta-consulting.co.uk",
+      "industry": "Consulting",
+      "country": "ENGLAND",
+      "employees": "11-50",
+      "revenue": 350000,
+      "year_founded": 2016,
+      "tech_stack": ["Cloud Services"],
+      "partners": ["Cisco"],
+      "website": "https://beta-consulting.co.uk"
+    },
+    {
+      "id": 106,
+      "name": "Voyage Communications",
+      "domain": "WWW.VOYAGE.IO",
+      "industry": "Voice",
+      "country": "WALES",
+      "employees": "51-200",
+      "revenue": 650000,
+      "year_founded": 2015,
+      "tech_stack": ["Telephony", "Microsoft 365"],
+      "partners": ["Vodafone"],
+      "website": "voyage.io"
+    },
+    {
+      "id": 107,
+      "name": "Voyage Communications Ops",
+      "domain": "voyage.io/support",
+      "industry": "Voice",
+      "country": "WALES",
+      "employees": "11-50",
+      "revenue": 220000,
+      "year_founded": 2022,
+      "tech_stack": ["Teams"],
+      "partners": ["Vodafone", "BT"],
+      "website": "https://voyage.io/support"
+    },
+    {
+      "id": 108,
+      "name": "Open Source Collective",
+      "domain": "foo.github.io",
+      "industry": "Software Development",
+      "country": "ENGLAND",
+      "employees": "1-10",
+      "revenue": 100000,
+      "year_founded": 2014,
+      "tech_stack": ["GitHub"],
+      "partners": []
+    },
+    {
+      "id": 109,
+      "name": "Portfolio Site",
+      "domain": "bar.github.io",
+      "industry": "Design",
+      "country": "ENGLAND",
+      "employees": "1-10",
+      "revenue": 10000,
+      "year_founded": 2019,
+      "tech_stack": ["GitHub"],
+      "partners": []
+    },
+    {
+      "id": 110,
+      "name": "No Domain Example",
+      "domain": "not a domain",
+      "industry": "Voice",
+      "country": "ENGLAND",
+      "employees": "1-10",
+      "revenue": 50000,
+      "year_founded": 2021,
+      "tech_stack": ["Telephony"],
+      "partners": ["BT"]
+    }
+  ],
+  "expected_domain_keys": {
+    "101": "acme.co.uk",
+    "102": "acme.co.uk",
+    "103": "acme.co.uk",
+    "104": "betait.co.uk",
+    "105": "beta-consulting.co.uk",
+    "106": "voyage.io",
+    "107": "voyage.io",
+    "108": "foo.github.io",
+    "109": "bar.github.io",
+    "110": null
+  },
+  "known_duplicate_pairs": [[101, 102], [101, 103], [102, 103], [106, 107]],
+  "known_non_duplicate_pairs": [[104, 105], [108, 109], [101, 104], [102, 106], [103, 105], [107, 109]],
+  "merge_groups": [
+    { "record_ids": [101, 102, 103], "expected_domain_key": "acme.co.uk" },
+    { "record_ids": [106, 107], "expected_domain_key": "voyage.io" }
+  ],
+  "keep_separate_groups": [
+    [108, 109],
+    [104, 105]
+  ]
+}
