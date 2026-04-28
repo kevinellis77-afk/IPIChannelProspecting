@@ -1263,7 +1263,7 @@ async function loadData() {
 
   try {
     const { data, source } = await loadDatasetWithFallback();
-    allData = data;
+    allData = normalizeDataset(data);
     loadingEl.style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     document.getElementById('app').style.flexDirection = 'column';
@@ -1286,6 +1286,81 @@ async function loadData() {
     errorTextEl.textContent = 'Unable to load dataset from external or inline sources. Retry, then hard-refresh. If it still fails, ensure data/ukchannel.json is reachable.';
     console.error('[loadData] failed', err);
   }
+}
+
+function normalizeDataset(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row, idx) => normalizeRecord(row, idx)).filter(Boolean);
+}
+
+function normalizeRecord(raw, idx) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const pick = (...keys) => {
+    for (const key of keys) {
+      if (raw[key] !== undefined && raw[key] !== null) return raw[key];
+    }
+    return null;
+  };
+
+  const asString = (v) => {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'number' && Number.isNaN(v)) return '';
+    const s = String(v).trim();
+    const sl = s.toLowerCase();
+    if (!s || sl === 'nan' || sl === 'null' || sl === 'undefined') return '';
+    return s;
+  };
+
+  const asNumber = (v) => {
+    if (v === null || v === undefined || v === '' || v === 'NaN' || (typeof v === 'number' && Number.isNaN(v))) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const asArray = (v) => {
+    if (Array.isArray(v)) return v.map(asString).filter(Boolean);
+    const s = asString(v);
+    if (!s) return [];
+    return s.split(/[;,|]/).map(item => item.trim()).filter(Boolean);
+  };
+
+  const dir1Name = asString(pick('dir1_name', 'Dir 1 Name'));
+  const nameParts = dir1Name ? dir1Name.split(/\s+/) : [];
+  const first = asString(pick('dir1_first')) || (nameParts[0] || '');
+  const last = asString(pick('dir1_last')) || (nameParts.slice(1).join(' ') || '');
+
+  const record = {
+    id: asNumber(pick('id')) ?? (idx + 1),
+    name: asString(pick('name', 'Organisation', 'Company Name')),
+    domain: asString(pick('domain', 'Domain')),
+    city: asString(pick('city', 'City')),
+    county: asString(pick('county', 'County')),
+    country: asString(pick('country', 'Country')),
+    industry: asString(pick('industry', 'Industry')),
+    channel_role: asString(pick('channel_role', 'Channel Role')),
+    channel_segment: asString(pick('channel_segment', 'Channel Segment')),
+    employees: asString(pick('employees', 'Employees')),
+    tech_stack: asArray(pick('tech_stack', 'Tech Stack')),
+    partners: asArray(pick('partners', 'Partners')),
+    keywords: asString(pick('keywords', 'Keywords')),
+    revenue: asNumber(pick('revenue', 'Revenue')) ?? 0,
+    credit_score: asNumber(pick('credit_score', 'Credit Score')) ?? 0,
+    credit_description: asString(pick('credit_description', 'Credit Rating')),
+    adopter_profile: asString(pick('adopter_profile', 'Adopter Profile')),
+    var_type: asString(pick('var_type', 'VAR Type')),
+    dir1_first: first,
+    dir1_last: last,
+    dir1_role: asString(pick('dir1_role', 'Dir 1 Role')),
+    dir1_email: asString(pick('dir1_email', 'Dir 1 Email')),
+    website: asString(pick('website', 'Website')),
+    phone: asString(pick('phone', 'Phone')),
+    company_email: asString(pick('company_email', 'Company Email')),
+    linkedin: asString(pick('linkedin', 'LinkedIn'))
+  };
+
+  if (!record.name) record.name = record.domain || `Company ${record.id}`;
+  return record;
 }
 
 async function loadDatasetWithFallback() {
