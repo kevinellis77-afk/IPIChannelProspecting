@@ -1124,7 +1124,33 @@ let filteredData = [];
 let selectedIds = new Set();
 let sortField = 'name';
 let sortAsc = true;
-let prospectLists = JSON.parse(localStorage.getItem('ukchannel_lists') || '[]');
+function safeParseJSON(raw, fallback) {
+  try { return JSON.parse(raw); } catch (_) { return fallback; }
+}
+
+function sanitizeProspectLists(rawLists) {
+  if (!Array.isArray(rawLists)) return [];
+  const clean = [];
+  const seenIds = new Set();
+  for (const entry of rawLists) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const id = Number(entry.id);
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    const companyIdsRaw = Array.isArray(entry.companyIds) ? entry.companyIds : [];
+    if (!Number.isFinite(id) || id <= 0 || !name) continue;
+    if (seenIds.has(id)) continue;
+    const companyIds = [...new Set(companyIdsRaw
+      .map(v => Number(v))
+      .filter(v => Number.isFinite(v) && v > 0))];
+    clean.push({ id, name, companyIds });
+    seenIds.add(id);
+  }
+  return clean;
+}
+
+let prospectLists = sanitizeProspectLists(
+  safeParseJSON(localStorage.getItem('ukchannel_lists') || '[]', [])
+);
 let listedFilter = 'any'; // 'any' | 'yes' | 'no'
 
 // Returns array of list names a company belongs to
@@ -1350,34 +1376,125 @@ function renderTable() {
   }
   document.getElementById('emptyState').style.display = 'none';
 
-  tbody.innerHTML = toShow.map(r => {
+  tbody.innerHTML = '';
+  toShow.forEach(r => {
     const sel = selectedIds.has(r.id);
-    const techTags = r.tech_stack.slice(0,3).map(t => `<span class="tech-tag">${t}</span>`).join('');
-    const dir1 = r.dir1_first ? `${r.dir1_first} ${r.dir1_last}` : '';
+    const dir1 = r.dir1_first ? `${r.dir1_first} ${r.dir1_last || ''}`.trim() : '';
     const creditClass = creditColors[r.credit_description] || 'badge-grey';
     const roleClass = roleColors[r.channel_role] || 'badge-grey';
     const companyLists = getCompanyLists(r.id);
     const inList = companyLists.length > 0;
-    const listCell = inList
-      ? `<span class="listed-dot" title="${companyLists.join(', ')}">${companyLists.length === 1 ? companyLists[0] : companyLists.length + ' lists'}</span>`
-      : `<span style="color:var(--text3);font-size:11px;">—</span>`;
-    return `<tr class="${sel ? 'selected':''} ${inList ? 'in-list':''}" onclick="rowClick(event, ${r.id})" data-id="${r.id}">
-      <td class="checkbox-col" onclick="event.stopPropagation()">
-        <input type="checkbox" ${sel?'checked':''} onchange="toggleSelect(${r.id}, this)">
-      </td>
-      <td class="td-name" title="${r.name}">${r.name || '—'}</td>
-      <td title="${r.industry}">${r.industry ? r.industry.split('|')[0].trim() : '—'}</td>
-      <td><span class="badge ${roleClass}">${r.channel_role || '—'}</span></td>
-      <td title="${r.channel_segment}">${r.channel_segment ? r.channel_segment.replace('|',' ') : '—'}</td>
-      <td><span class="badge badge-grey">${r.employees || '—'}</span></td>
-      <td><span class="badge ${creditClass}">${r.credit_description ? r.credit_description.split(' ')[0] : '—'}</span></td>
-      <td>${techTags || '<span style="color:var(--text3)">—</span>'}</td>
-      <td>${r.city || '—'}</td>
-      <td>${r.country ? r.country.charAt(0) + r.country.slice(1).toLowerCase() : '—'}</td>
-      <td>${dir1 ? `<span style="font-size:11px">${dir1}</span>` : '<span style="color:var(--text3)">—</span>'}</td>
-      <td onclick="event.stopPropagation()">${listCell}</td>
-    </tr>`;
-  }).join('');
+
+    const tr = document.createElement('tr');
+    if (sel) tr.classList.add('selected');
+    if (inList) tr.classList.add('in-list');
+    tr.setAttribute('data-id', String(r.id));
+    tr.addEventListener('click', (event) => rowClick(event, r.id));
+
+    const tdCb = document.createElement('td');
+    tdCb.className = 'checkbox-col';
+    tdCb.addEventListener('click', e => e.stopPropagation());
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = sel;
+    input.addEventListener('change', function() { toggleSelect(r.id, this); });
+    tdCb.appendChild(input);
+    tr.appendChild(tdCb);
+
+    const tdName = document.createElement('td');
+    tdName.className = 'td-name';
+    tdName.title = r.name || '';
+    tdName.textContent = r.name || '—';
+    tr.appendChild(tdName);
+
+    const tdIndustry = document.createElement('td');
+    tdIndustry.title = r.industry || '';
+    tdIndustry.textContent = r.industry ? r.industry.split('|')[0].trim() : '—';
+    tr.appendChild(tdIndustry);
+
+    const tdRole = document.createElement('td');
+    const roleBadge = document.createElement('span');
+    roleBadge.className = `badge ${roleClass}`;
+    roleBadge.textContent = r.channel_role || '—';
+    tdRole.appendChild(roleBadge);
+    tr.appendChild(tdRole);
+
+    const tdSeg = document.createElement('td');
+    tdSeg.title = r.channel_segment || '';
+    tdSeg.textContent = r.channel_segment ? r.channel_segment.replace('|', ' ') : '—';
+    tr.appendChild(tdSeg);
+
+    const tdEmp = document.createElement('td');
+    const empBadge = document.createElement('span');
+    empBadge.className = 'badge badge-grey';
+    empBadge.textContent = r.employees || '—';
+    tdEmp.appendChild(empBadge);
+    tr.appendChild(tdEmp);
+
+    const tdCredit = document.createElement('td');
+    const creditBadge = document.createElement('span');
+    creditBadge.className = `badge ${creditClass}`;
+    creditBadge.textContent = r.credit_description ? r.credit_description.split(' ')[0] : '—';
+    tdCredit.appendChild(creditBadge);
+    tr.appendChild(tdCredit);
+
+    const tdTech = document.createElement('td');
+    const techList = Array.isArray(r.tech_stack) ? r.tech_stack.slice(0, 3) : [];
+    if (techList.length) {
+      techList.forEach(t => {
+        const tag = document.createElement('span');
+        tag.className = 'tech-tag';
+        tag.textContent = t;
+        tdTech.appendChild(tag);
+      });
+    } else {
+      const none = document.createElement('span');
+      none.style.color = 'var(--text3)';
+      none.textContent = '—';
+      tdTech.appendChild(none);
+    }
+    tr.appendChild(tdTech);
+
+    const tdCity = document.createElement('td');
+    tdCity.textContent = r.city || '—';
+    tr.appendChild(tdCity);
+
+    const tdCountry = document.createElement('td');
+    tdCountry.textContent = r.country ? r.country.charAt(0) + r.country.slice(1).toLowerCase() : '—';
+    tr.appendChild(tdCountry);
+
+    const tdDir = document.createElement('td');
+    if (dir1) {
+      const dirSpan = document.createElement('span');
+      dirSpan.style.fontSize = '11px';
+      dirSpan.textContent = dir1;
+      tdDir.appendChild(dirSpan);
+    } else {
+      const none = document.createElement('span');
+      none.style.color = 'var(--text3)';
+      none.textContent = '—';
+      tdDir.appendChild(none);
+    }
+    tr.appendChild(tdDir);
+
+    const tdList = document.createElement('td');
+    tdList.addEventListener('click', e => e.stopPropagation());
+    if (inList) {
+      const dot = document.createElement('span');
+      dot.className = 'listed-dot';
+      dot.title = companyLists.join(', ');
+      dot.textContent = companyLists.length === 1 ? companyLists[0] : `${companyLists.length} lists`;
+      tdList.appendChild(dot);
+    } else {
+      const none = document.createElement('span');
+      none.style.color = 'var(--text3)';
+      none.style.fontSize = '11px';
+      none.textContent = '—';
+      tdList.appendChild(none);
+    }
+    tr.appendChild(tdList);
+    tbody.appendChild(tr);
+  });
 
   // Lazy load more
   if (filteredData.length > pageShown) {
@@ -1466,110 +1583,210 @@ function showDetail(r) {
 }
 
 function renderDetailBody(r) {
-  const persons = [1,2,3].map(n => {
-    const first = r[`dir${n}_first`], last = r[`dir${n}_last`];
-    if (!first) return '';
-    const email = r[`dir${n}_email`];
-    const status = r[`dir${n}_email_status`];
-    const statusHtml = status ? `<span class="email-status ${status.toLowerCase()}">${status}</span>` : '';
-    return `<div class="person-card">
-      <div class="person-name">${first} ${last}</div>
-      <div class="person-role">${r[`dir${n}_role`] || ''}</div>
-      ${email ? `<div class="person-email"><a href="mailto:${email}">${email}</a>${statusHtml}</div>` : ''}
-    </div>`;
-  }).join('');
+  const modalBody = document.getElementById('modalBody');
+  modalBody.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'modal-grid';
+  const colA = document.createElement('div');
+  const colB = document.createElement('div');
 
-  const tech = r.tech_stack.map(t => `<span class="badge badge-blue">${t}</span>`).join(' ');
-  const partners = r.partners.slice(0,20).map(p => `<span class="badge badge-grey">${p}</span>`).join(' ');
+  const mkSection = (title) => {
+    const s = document.createElement('div');
+    s.className = 'detail-section';
+    const h = document.createElement('h4');
+    h.textContent = title;
+    s.appendChild(h);
+    return s;
+  };
+  const addRow = (section, key, valueNodeOrText) => {
+    const row = document.createElement('div');
+    row.className = 'detail-row';
+    const k = document.createElement('span');
+    k.className = 'detail-key';
+    k.textContent = key;
+    const v = document.createElement('span');
+    v.className = 'detail-val';
+    if (valueNodeOrText instanceof Node) v.appendChild(valueNodeOrText);
+    else v.textContent = valueNodeOrText || '—';
+    row.appendChild(k); row.appendChild(v);
+    section.appendChild(row);
+  };
 
-  // Build list membership section
+  const listSection = mkSection('Prospect Lists');
+  const chips = document.createElement('div');
+  chips.style.display = 'flex'; chips.style.flexWrap = 'wrap'; chips.style.gap = '6px';
   const companyLists = getCompanyLists(r.id);
-  const memberChips = companyLists.map(name => {
-    const list = prospectLists.find(l => l.name === name);
-    return `<span class="list-member-chip">
-      ${name}
-      <button onclick="removeFromListById(${list ? list.id : 0}, ${r.id})" title="Remove from list">×</button>
-    </span>`;
-  }).join('');
+  if (companyLists.length) {
+    companyLists.forEach(name => {
+      const list = prospectLists.find(l => l.name === name);
+      const chip = document.createElement('span');
+      chip.className = 'list-member-chip';
+      chip.appendChild(document.createTextNode(name));
+      const btn = document.createElement('button');
+      btn.title = 'Remove from list';
+      btn.textContent = '×';
+      btn.addEventListener('click', () => removeFromListById(list ? list.id : 0, r.id));
+      chip.appendChild(btn);
+      chips.appendChild(chip);
+    });
+  } else {
+    const none = document.createElement('span');
+    none.style.fontSize = '12px'; none.style.color = 'var(--text3)';
+    none.textContent = 'Not in any list';
+    chips.appendChild(none);
+  }
+  listSection.appendChild(chips);
 
-  // Dropdown options for lists this company is NOT yet in
   const availableLists = prospectLists.filter(l => !l.companyIds.includes(r.id));
-  const addDropdownOptions = availableLists.map(l =>
-    `<option value="${l.id}">${l.name}</option>`
-  ).join('');
-  const addToListHtml = availableLists.length > 0
-    ? `<div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
-        <select id="sidebarListSelect_${r.id}" style="flex:1;background:var(--surface2);border:1px solid var(--border2);border-radius:7px;padding:6px 10px;color:var(--text2);font-family:'DM Mono',monospace;font-size:11px;outline:none;">
-          <option value="">Add to list…</option>
-          ${addDropdownOptions}
-        </select>
-        <button class="btn primary" style="padding:6px 12px;font-size:11px;" onclick="addToListFromSidebar(${r.id})">Add</button>
-      </div>`
-    : prospectLists.length === 0
-      ? `<div style="font-size:11px;color:var(--text3);margin-top:6px;">No lists yet — create one in the Prospect Lists tab</div>`
-      : `<div style="font-size:11px;color:var(--text3);margin-top:6px;">Already in all lists</div>`;
+  if (availableLists.length > 0) {
+    const addWrap = document.createElement('div');
+    addWrap.style.display = 'flex'; addWrap.style.gap = '6px'; addWrap.style.marginTop = '8px'; addWrap.style.alignItems = 'center';
+    const sel = document.createElement('select');
+    sel.id = `sidebarListSelect_${r.id}`;
+    sel.style.cssText = "flex:1;background:var(--surface2);border:1px solid var(--border2);border-radius:7px;padding:6px 10px;color:var(--text2);font-family:'DM Mono',monospace;font-size:11px;outline:none;";
+    const opt0 = document.createElement('option');
+    opt0.value = ''; opt0.textContent = 'Add to list…'; sel.appendChild(opt0);
+    availableLists.forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = String(l.id); opt.textContent = l.name; sel.appendChild(opt);
+    });
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn primary';
+    addBtn.style.padding = '6px 12px'; addBtn.style.fontSize = '11px';
+    addBtn.textContent = 'Add';
+    addBtn.addEventListener('click', () => addToListFromSidebar(r.id));
+    addWrap.appendChild(sel); addWrap.appendChild(addBtn);
+    listSection.appendChild(addWrap);
+  } else {
+    const msg = document.createElement('div');
+    msg.style.fontSize = '11px'; msg.style.color = 'var(--text3)'; msg.style.marginTop = '6px';
+    msg.textContent = prospectLists.length === 0 ? 'No lists yet — create one in the Prospect Lists tab' : 'Already in all lists';
+    listSection.appendChild(msg);
+  }
+  colA.appendChild(listSection);
 
-  document.getElementById('modalBody').innerHTML = `
-    <div class="modal-grid">
-      <div>
-        <div class="detail-section">
-          <h4>Prospect Lists</h4>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;">
-            ${memberChips || '<span style="font-size:12px;color:var(--text3);">Not in any list</span>'}
-          </div>
-          ${addToListHtml}
-        </div>
-        <div class="detail-section">
-          <h4>Company Details</h4>
-          <div class="detail-row"><span class="detail-key">Channel Role</span><span class="detail-val">${r.channel_role || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Segment</span><span class="detail-val">${r.channel_segment || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Industry</span><span class="detail-val">${r.industry || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Employees</span><span class="detail-val">${r.employees || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Founded</span><span class="detail-val">${r.year_founded || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">VAR Type</span><span class="detail-val">${r.var_type || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Adopter</span><span class="detail-val">${r.adopter_profile || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Trading Status</span><span class="detail-val">${r.trading_status || '—'}</span></div>
-        </div>
-        <div class="detail-section">
-          <h4>Financials</h4>
-          <div class="detail-row"><span class="detail-key">Credit Score</span><span class="detail-val">${r.credit_score || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Credit Rating</span><span class="detail-val">${r.credit_description || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Credit Limit</span><span class="detail-val">${fmt(r.credit_limit)}</span></div>
-          <div class="detail-row"><span class="detail-key">Revenue</span><span class="detail-val">${fmt(r.revenue)}</span></div>
-          <div class="detail-row"><span class="detail-key">Net Worth</span><span class="detail-val">${fmt(r.net_worth)}</span></div>
-        </div>
-        <div class="detail-section">
-          <h4>Contact & Links</h4>
-          <div class="detail-row"><span class="detail-key">Website</span><span class="detail-val">${r.website ? `<a href="${r.website}" target="_blank">${r.domain || r.website}</a>` : '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Phone</span><span class="detail-val">${r.phone || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Email</span><span class="detail-val">${r.email || '—'}</span></div>
-          <div class="detail-row"><span class="detail-key">Email Pattern</span><span class="detail-val">${r.email_pattern || '—'}</span></div>
-          ${r.linkedin ? `<div class="detail-row"><span class="detail-key">LinkedIn</span><span class="detail-val"><a href="${r.linkedin}" target="_blank">View Profile</a></span></div>` : ''}
-          ${r.ch_link ? `<div class="detail-row"><span class="detail-key">Companies House</span><span class="detail-val"><a href="${r.ch_link}" target="_blank">View Filing</a></span></div>` : ''}
-        </div>
-      </div>
-      <div>
-        <div class="detail-section">
-          <h4>People</h4>
-          ${persons || '<p style="color:var(--text3);font-size:12px;">No director data</p>'}
-        </div>
-        <div class="detail-section">
-          <h4>Find Contacts on LinkedIn</h4>
-          <div class="linkedin-search-section" id="liSearchSection_${r.id}">
-            ${buildLinkedInSection(r)}
-          </div>
-        </div>
-        <div class="detail-section">
-          <h4>Technology Stack</h4>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;">${tech || '<span style="color:var(--text3);font-size:12px;">No data</span>'}</div>
-        </div>
-        <div class="detail-section">
-          <h4>Partner Ecosystem (${r.partners.length})</h4>
-          <div style="display:flex;flex-wrap:wrap;gap:4px;">${partners || '<span style="color:var(--text3);font-size:12px;">No data</span>'}</div>
-        </div>
-      </div>
-    </div>
-  `;
+  const companySection = mkSection('Company Details');
+  addRow(companySection, 'Channel Role', r.channel_role || '—');
+  addRow(companySection, 'Segment', r.channel_segment || '—');
+  addRow(companySection, 'Industry', r.industry || '—');
+  addRow(companySection, 'Employees', r.employees || '—');
+  addRow(companySection, 'Founded', r.year_founded || '—');
+  addRow(companySection, 'VAR Type', r.var_type || '—');
+  addRow(companySection, 'Adopter', r.adopter_profile || '—');
+  addRow(companySection, 'Trading Status', r.trading_status || '—');
+  colA.appendChild(companySection);
+
+  const finSection = mkSection('Financials');
+  addRow(finSection, 'Credit Score', String(r.credit_score || '—'));
+  addRow(finSection, 'Credit Rating', r.credit_description || '—');
+  addRow(finSection, 'Credit Limit', fmt(r.credit_limit));
+  addRow(finSection, 'Revenue', fmt(r.revenue));
+  addRow(finSection, 'Net Worth', fmt(r.net_worth));
+  colA.appendChild(finSection);
+
+  const linksSection = mkSection('Contact & Links');
+  if (r.website) {
+    const a = document.createElement('a');
+    a.href = r.website; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.textContent = r.domain || r.website;
+    addRow(linksSection, 'Website', a);
+  } else addRow(linksSection, 'Website', '—');
+  addRow(linksSection, 'Phone', r.phone || '—');
+  addRow(linksSection, 'Email', r.email || '—');
+  addRow(linksSection, 'Email Pattern', r.email_pattern || '—');
+  if (r.linkedin) {
+    const a = document.createElement('a'); a.href = r.linkedin; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = 'View Profile';
+    addRow(linksSection, 'LinkedIn', a);
+  }
+  if (r.ch_link) {
+    const a = document.createElement('a'); a.href = r.ch_link; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = 'View Filing';
+    addRow(linksSection, 'Companies House', a);
+  }
+  colA.appendChild(linksSection);
+
+  const peopleSection = mkSection('People');
+  let peopleCount = 0;
+  [1,2,3].forEach(n => {
+    const first = r[`dir${n}_first`], last = r[`dir${n}_last`];
+    if (!first) return;
+    peopleCount++;
+    const card = document.createElement('div');
+    card.className = 'person-card';
+    const nm = document.createElement('div'); nm.className = 'person-name'; nm.textContent = `${first} ${last || ''}`.trim();
+    const role = document.createElement('div'); role.className = 'person-role'; role.textContent = r[`dir${n}_role`] || '';
+    card.appendChild(nm); card.appendChild(role);
+    const email = r[`dir${n}_email`];
+    if (email) {
+      const ewrap = document.createElement('div'); ewrap.className = 'person-email';
+      const a = document.createElement('a'); a.href = `mailto:${email}`; a.textContent = email; ewrap.appendChild(a);
+      const status = r[`dir${n}_email_status`];
+      if (status) {
+        const s = document.createElement('span');
+        s.className = `email-status ${String(status).toLowerCase()}`;
+        s.textContent = status;
+        ewrap.appendChild(s);
+      }
+      card.appendChild(ewrap);
+    }
+    peopleSection.appendChild(card);
+  });
+  if (!peopleCount) {
+    const p = document.createElement('p');
+    p.style.color = 'var(--text3)'; p.style.fontSize = '12px'; p.textContent = 'No director data';
+    peopleSection.appendChild(p);
+  }
+  colB.appendChild(peopleSection);
+
+  const liSection = mkSection('Find Contacts on LinkedIn');
+  const liWrap = document.createElement('div');
+  liWrap.className = 'linkedin-search-section';
+  liWrap.id = `liSearchSection_${r.id}`;
+  // Known-safe internal HTML fragment only.
+  liWrap.innerHTML = buildLinkedInSection(r);
+  liSection.appendChild(liWrap);
+  colB.appendChild(liSection);
+
+  const techSection = mkSection('Technology Stack');
+  const techWrap = document.createElement('div');
+  techWrap.style.display = 'flex'; techWrap.style.flexWrap = 'wrap'; techWrap.style.gap = '6px';
+  const techStack = Array.isArray(r.tech_stack) ? r.tech_stack : [];
+  if (techStack.length) {
+    techStack.forEach(t => {
+      const b = document.createElement('span');
+      b.className = 'badge badge-blue';
+      b.textContent = t;
+      techWrap.appendChild(b);
+    });
+  } else {
+    const none = document.createElement('span');
+    none.style.color = 'var(--text3)'; none.style.fontSize = '12px'; none.textContent = 'No data';
+    techWrap.appendChild(none);
+  }
+  techSection.appendChild(techWrap);
+  colB.appendChild(techSection);
+
+  const partnersArr = Array.isArray(r.partners) ? r.partners : [];
+  const partnerSection = mkSection(`Partner Ecosystem (${partnersArr.length})`);
+  const partnerWrap = document.createElement('div');
+  partnerWrap.style.display = 'flex'; partnerWrap.style.flexWrap = 'wrap'; partnerWrap.style.gap = '4px';
+  if (partnersArr.length) {
+    partnersArr.slice(0,20).forEach(p => {
+      const b = document.createElement('span');
+      b.className = 'badge badge-grey';
+      b.textContent = p;
+      partnerWrap.appendChild(b);
+    });
+  } else {
+    const none = document.createElement('span');
+    none.style.color = 'var(--text3)'; none.style.fontSize = '12px'; none.textContent = 'No data';
+    partnerWrap.appendChild(none);
+  }
+  partnerSection.appendChild(partnerWrap);
+  colB.appendChild(partnerSection);
+
+  grid.appendChild(colA);
+  grid.appendChild(colB);
+  modalBody.appendChild(grid);
 }
 
 function closeModal(event) {
@@ -1644,18 +1861,43 @@ function createList() {
 
 function showAddToList() {
   const body = document.getElementById('listModalBody');
+  body.innerHTML = '';
   if (prospectLists.length === 0) {
-    body.innerHTML = `<p style="color:var(--text3); font-size:13px; margin-bottom:16px;">No lists yet. Create one first in the Prospect Lists tab.</p>`;
+    const p = document.createElement('p');
+    p.style.color = 'var(--text3)';
+    p.style.fontSize = '13px';
+    p.style.marginBottom = '16px';
+    p.textContent = 'No lists yet. Create one first in the Prospect Lists tab.';
+    body.appendChild(p);
   } else {
-    body.innerHTML = prospectLists.map(l => `
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 0; border-bottom:1px solid var(--border);">
-        <div>
-          <div style="font-weight:500;">${l.name}</div>
-          <div style="font-size:11px; color:var(--text3); font-family:'DM Mono',monospace;">${l.companyIds.length} companies</div>
-        </div>
-        <button class="btn primary" onclick="addToList(${l.id})">Add ${selectedIds.size}</button>
-      </div>
-    `).join('');
+    prospectLists.forEach(l => {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.justifyContent = 'space-between';
+      row.style.padding = '12px 0';
+      row.style.borderBottom = '1px solid var(--border)';
+
+      const left = document.createElement('div');
+      const name = document.createElement('div');
+      name.style.fontWeight = '500';
+      name.textContent = l.name;
+      const meta = document.createElement('div');
+      meta.style.fontSize = '11px';
+      meta.style.color = 'var(--text3)';
+      meta.style.fontFamily = "'DM Mono',monospace";
+      meta.textContent = `${l.companyIds.length} companies`;
+      left.appendChild(name);
+      left.appendChild(meta);
+
+      const btn = document.createElement('button');
+      btn.className = 'btn primary';
+      btn.textContent = `Add ${selectedIds.size}`;
+      btn.addEventListener('click', () => addToList(l.id));
+      row.appendChild(left);
+      row.appendChild(btn);
+      body.appendChild(row);
+    });
   }
   document.getElementById('listOverlay').classList.add('open');
 }
@@ -1687,40 +1929,96 @@ function deleteList(listId) {
 function renderLists() {
   const container = document.getElementById('listsContainer');
   document.getElementById('listsSubtitle').textContent = `${prospectLists.length} list${prospectLists.length !== 1 ? 's' : ''}`;
+  container.innerHTML = '';
   
   if (prospectLists.length === 0) {
-    container.innerHTML = `<div class="empty"><h3>No lists yet</h3><p>Select companies in Explore, then click "Add to List"</p></div>`;
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    const h3 = document.createElement('h3');
+    h3.textContent = 'No lists yet';
+    const p = document.createElement('p');
+    p.textContent = 'Select companies in Explore, then click "Add to List"';
+    empty.appendChild(h3);
+    empty.appendChild(p);
+    container.appendChild(empty);
     return;
   }
-  container.innerHTML = prospectLists.map(list => {
+  prospectLists.forEach(list => {
     const companies = list.companyIds.map(id => allData.find(d => d.id === id)).filter(Boolean);
-    const preview = companies.slice(0,5).map(c => 
-      `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
-        <div>
-          <span style="font-size:13px;font-weight:500;">${c.name}</span>
-          <span style="font-size:11px;color:var(--text3);margin-left:8px;">${c.industry || ''}</span>
-        </div>
-        <button class="btn" style="padding:4px 10px;font-size:11px;" onclick="removeFromList(${list.id}, ${c.id})">✕</button>
-      </div>`
-    ).join('');
-    const more = companies.length > 5 ? `<div style="font-size:12px;color:var(--text3);padding:8px 0;">...and ${companies.length-5} more</div>` : '';
-    
-    return `<div class="prospect-list-card">
-      <div class="list-card-header">
-        <div>
-          <div class="list-card-name">${list.name}</div>
-          <div style="font-size:12px;color:var(--text3);margin-top:2px;">${companies.length} companies</div>
-        </div>
-        <div class="list-card-actions">
-          <button class="btn" onclick="exportListCSV(${list.id})">⬇ Export CSV</button>
-          <button class="btn" onclick="exportListHubspot(${list.id})">⬇ HubSpot</button>
-          <button class="btn" onclick="mailtoList(${list.id})">✉ Mailto</button>
-          <button class="btn danger-btn" onclick="deleteList(${list.id})">Delete</button>
-        </div>
-      </div>
-      ${preview}${more}
-    </div>`;
-  }).join('');
+    const card = document.createElement('div');
+    card.className = 'prospect-list-card';
+
+    const header = document.createElement('div');
+    header.className = 'list-card-header';
+    const left = document.createElement('div');
+    const name = document.createElement('div');
+    name.className = 'list-card-name';
+    name.textContent = list.name;
+    const count = document.createElement('div');
+    count.style.fontSize = '12px';
+    count.style.color = 'var(--text3)';
+    count.style.marginTop = '2px';
+    count.textContent = `${companies.length} companies`;
+    left.appendChild(name);
+    left.appendChild(count);
+
+    const actions = document.createElement('div');
+    actions.className = 'list-card-actions';
+    const makeBtn = (text, cls, fn) => {
+      const b = document.createElement('button');
+      b.className = cls;
+      b.textContent = text;
+      b.addEventListener('click', fn);
+      return b;
+    };
+    actions.appendChild(makeBtn('⬇ Export CSV', 'btn', () => exportListCSV(list.id)));
+    actions.appendChild(makeBtn('⬇ HubSpot', 'btn', () => exportListHubspot(list.id)));
+    actions.appendChild(makeBtn('✉ Mailto', 'btn', () => mailtoList(list.id)));
+    actions.appendChild(makeBtn('Delete', 'btn danger-btn', () => deleteList(list.id)));
+    header.appendChild(left);
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    companies.slice(0,5).forEach(c => {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.justifyContent = 'space-between';
+      row.style.padding = '8px 0';
+      row.style.borderBottom = '1px solid var(--border)';
+      const rowLeft = document.createElement('div');
+      const cName = document.createElement('span');
+      cName.style.fontSize = '13px';
+      cName.style.fontWeight = '500';
+      cName.textContent = c.name || '—';
+      const cIndustry = document.createElement('span');
+      cIndustry.style.fontSize = '11px';
+      cIndustry.style.color = 'var(--text3)';
+      cIndustry.style.marginLeft = '8px';
+      cIndustry.textContent = c.industry || '';
+      rowLeft.appendChild(cName);
+      rowLeft.appendChild(cIndustry);
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn';
+      removeBtn.style.padding = '4px 10px';
+      removeBtn.style.fontSize = '11px';
+      removeBtn.textContent = '✕';
+      removeBtn.addEventListener('click', () => removeFromList(list.id, c.id));
+      row.appendChild(rowLeft);
+      row.appendChild(removeBtn);
+      card.appendChild(row);
+    });
+
+    if (companies.length > 5) {
+      const more = document.createElement('div');
+      more.style.fontSize = '12px';
+      more.style.color = 'var(--text3)';
+      more.style.padding = '8px 0';
+      more.textContent = `...and ${companies.length - 5} more`;
+      card.appendChild(more);
+    }
+    container.appendChild(card);
+  });
 }
 
 function closeListModal(event) {
