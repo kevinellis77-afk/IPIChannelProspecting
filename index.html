@@ -1375,6 +1375,9 @@ function clearFilters() {
   document.getElementById('searchInput').value = '';
   Object.keys(activeFilters).forEach(k => { if (k !== 'search') activeFilters[k].clear(); });
   document.querySelectorAll('.chip.active').forEach(c => c.classList.remove('active'));
+  listedFilter = 'any';
+  document.querySelectorAll('[data-listed]').forEach(c => c.classList.remove('active'));
+  document.getElementById('chip-listed-any').classList.add('active');
   updateChipCounts();
   applyFilters();
 }
