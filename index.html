@@ -1576,6 +1576,13 @@
           <input type="checkbox" id="includeScoringAuditExport" onchange="setIncludeScoringAuditExport(this.checked)">
           Include scoring audit field
         </label>
+        <label class="selection-scope-note" for="exportFormatSelect" style="display:flex;align-items:center;gap:6px;">
+          Export format
+          <select class="select-sort" id="exportFormatSelect" onchange="setExportFormat(this.value)">
+            <option value="canonical" selected>Canonical (one row per domain)</option>
+            <option value="raw">Raw (all legal entities)</option>
+          </select>
+        </label>
         <button class="btn" onclick="exportCSV('filtered')">⬇ Export Filtered</button>
         <button class="btn" onclick="exportHubspot()">⬇ HubSpot CSV</button>
         <button class="btn" onclick="exportOverridesFile()">⬇ Overrides JSON</button>
@@ -5179,8 +5186,20 @@ function dedupeCanonicalRows(records) {
   return out;
 }
 
+function getExportMemberMeta(record) {
+  const canonicalEntity = getCanonicalEntityByRecordId(record.id);
+  const memberRecordIds = Array.isArray(canonicalEntity?.child_source_record_ids)
+    ? canonicalEntity.child_source_record_ids
+    : [record.id];
+  return {
+    domainKey: canonicalEntity?.domain_key || record.domain_key || '',
+    memberRecordCount: memberRecordIds.length || 1,
+    memberRecordIds: memberRecordIds.join(';')
+  };
+}
+
 function buildCSVRows(companies) {
-  const headers = ['Organisation','Industry','Channel Role','Channel Segment','Employees','City','Country',
+  const headers = ['domain_key','member_record_count','member_record_ids','Organisation','Industry','Channel Role','Channel Segment','Employees','City','Country',
     'Website','Domain','Email Pattern','Phone','Company Email','LinkedIn',
     'Credit Score','Credit Rating','Credit Limit','Revenue','Net Worth',
     'Year Founded','Adopter Profile','VAR Type','Tech Stack','Partners',
@@ -5195,7 +5214,9 @@ function buildCSVRows(companies) {
   const rows = [toCSVRow(headers)];
   companies.forEach(r => {
     const scoringData = getExportScoringData(r);
+    const memberMeta = getExportMemberMeta(r);
     const rowValues = [
+      memberMeta.domainKey, memberMeta.memberRecordCount, memberMeta.memberRecordIds,
       r.name, r.industry, r.channel_role, r.channel_segment, r.employees,
       r.city, r.country, r.website, r.domain, r.email_pattern, r.phone, r.email, r.linkedin,
       r.credit_score, r.credit_description, r.credit_limit, r.revenue, r.net_worth,
@@ -5229,34 +5250,70 @@ function buildHubspotRows(companies) {
   return rows;
 }
 
+let exportFormat = 'canonical';
+
+function setExportFormat(value) {
+  exportFormat = value === 'raw' ? 'raw' : 'canonical';
+}
+
+function collectRawRowsForCanonicalRows(canonicalRows) {
+  const canonicalIds = new Set();
+  const explicitIds = new Set();
+  canonicalRows.forEach(record => {
+    if (!record) return;
+    explicitIds.add(record.id);
+    const canonicalId = record.canonical_entity_id || recordToCanonicalEntityId.get(record.id);
+    if (canonicalId) canonicalIds.add(canonicalId);
+  });
+  const companies = allData.filter(record => {
+    const canonicalId = recordToCanonicalEntityId.get(record.id);
+    return explicitIds.has(record.id) || (canonicalId && canonicalIds.has(canonicalId));
+  });
+  return companies;
+}
+
+function getExportCompanies(scope = 'filtered') {
+  const selectedRows = dedupeCanonicalRows([...selectedIds].map(id => getPrimaryEntityRows().find(row => row.id === id)).filter(Boolean));
+  const canonicalRows = scope === 'selected'
+    ? selectedRows
+    : selectedRows.length > 0
+      ? selectedRows
+      : filteredData;
+
+  if (exportFormat === 'raw') {
+    return collectRawRowsForCanonicalRows(canonicalRows);
+  }
+
+  return canonicalRows;
+}
+
 function exportCSV(type) {
-  const companies = type === 'filtered'
-    ? filteredData
-    : dedupeCanonicalRows([...selectedIds].map(id => getPrimaryEntityRows().find(row => row.id === id)).filter(Boolean));
-  downloadCSV('ukchannel_export.csv', buildCSVRows(companies));
-  toast(`Exported ${companies.length} companies`);
+  const scope = type === 'filtered' ? 'filtered' : 'selected';
+  const companies = getExportCompanies(scope);
+  downloadCSV(`ukchannel_export_${exportFormat}.csv`, buildCSVRows(companies));
+  toast(`Exported ${companies.length} companies (${exportFormat})`);
 }
 
 function exportHubspot() {
-  const companies = selectedIds.size > 0
-    ? dedupeCanonicalRows([...selectedIds].map(id => getPrimaryEntityRows().find(row => row.id === id)).filter(Boolean))
-    : filteredData;
-  downloadCSV('ukchannel_hubspot.csv', buildHubspotRows(companies));
-  toast(`HubSpot CSV: ${companies.length} companies`);
+  const companies = getExportCompanies('selected');
+  downloadCSV(`ukchannel_hubspot_${exportFormat}.csv`, buildHubspotRows(companies));
+  toast(`HubSpot CSV: ${companies.length} companies (${exportFormat})`);
 }
 
 function exportListCSV(listId) {
   const list = prospectLists.find(l => l.id === listId);
-  const companies = dedupeCanonicalRows(list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean));
-  downloadCSV(`${list.name.replace(/[^a-z0-9]/gi,'_')}.csv`, buildCSVRows(companies));
-  toast(`Exported "${list.name}"`);
+  const canonicalRows = dedupeCanonicalRows(list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean));
+  const companies = exportFormat === 'raw' ? collectRawRowsForCanonicalRows(canonicalRows) : canonicalRows;
+  downloadCSV(`${list.name.replace(/[^a-z0-9]/gi,'_')}_${exportFormat}.csv`, buildCSVRows(companies));
+  toast(`Exported "${list.name}" (${exportFormat})`);
 }
 
 function exportListHubspot(listId) {
   const list = prospectLists.find(l => l.id === listId);
-  const companies = dedupeCanonicalRows(list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean));
-  downloadCSV(`${list.name.replace(/[^a-z0-9]/gi,'_')}_hubspot.csv`, buildHubspotRows(companies));
-  toast(`HubSpot CSV: "${list.name}"`);
+  const canonicalRows = dedupeCanonicalRows(list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean));
+  const companies = exportFormat === 'raw' ? collectRawRowsForCanonicalRows(canonicalRows) : canonicalRows;
+  downloadCSV(`${list.name.replace(/[^a-z0-9]/gi,'_')}_hubspot_${exportFormat}.csv`, buildHubspotRows(companies));
+  toast(`HubSpot CSV: "${list.name}" (${exportFormat})`);
 }
 
 function mailtoList(listId) {
