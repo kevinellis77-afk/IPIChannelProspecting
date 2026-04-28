@@ -22,14 +22,14 @@ See `data/README.md` for a representative object and extra implementation notes.
 
 ### Calibration set for score tuning
 
-A small curated calibration set is available at `data/calibration_set.json` for manual score quality checks.  
-Each sample record includes expected:
+A fixed calibration sample is available at `data/calibration_set.json` for score quality checks.
+The file now includes:
 
-- `expected_revenue_segment`
-- `expected_score_band`
-- `expected_tier`
+- `records`: fixed synthetic sample records used for repeated calibration validation
+- `expected_order`: expected strongest-to-weakest ordering of those records
+- `validation_groups`: scenario groups used to test specific ranking behaviors
 
-Use these samples as fixed reference points when tuning scoring logic or score-to-tier thresholds.
+Use this sample as a stable benchmark when tuning threshold behavior.
 
 ### How to refresh/export data
 
@@ -57,6 +57,8 @@ When refining ranking quality, use this lightweight process:
 1. Generate the latest ranked account list from the app.
 2. Review the **top 20** and **bottom 20** ranked accounts against business expectations.
 3. Compare outcomes for calibration accounts in `data/calibration_set.json`.
-4. Adjust scoring weights/thresholds based on the observed mis-ranks.
+4. Adjust score thresholds/cutoffs only (do **not** change dimension weights unless explicitly requested by business owners).
 5. Re-run ranking and validate improvements against the same top/bottom slices.
 6. Re-validate reason-code explainability with channel sales stakeholders before finalizing changes.
+
+The automated calibration audit script (`node scripts/calibration_audit.js`) also writes a before/after top-20 comparison to `data/top20_before_after.md`.

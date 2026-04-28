@@ -1,58 +1,126 @@
-[
-  {
-    "id": 91001,
-    "name": "Northbridge Managed Services",
-    "expected_revenue_segment": "High",
-    "expected_score_band": "A",
-    "expected_tier": "Tier 1"
-  },
-  {
-    "id": 91002,
-    "name": "Delta Unified Comms",
-    "expected_revenue_segment": "Medium",
-    "expected_score_band": "B",
-    "expected_tier": "Tier 2"
-  },
-  {
-    "id": 91003,
-    "name": "Vertex Cloud Partners",
-    "expected_revenue_segment": "High",
-    "expected_score_band": "A",
-    "expected_tier": "Tier 1"
-  },
-  {
-    "id": 91004,
-    "name": "Harborline IT",
-    "expected_revenue_segment": "Low",
-    "expected_score_band": "C",
-    "expected_tier": "Tier 3"
-  },
-  {
-    "id": 91005,
-    "name": "Summit Security Integrators",
-    "expected_revenue_segment": "Medium",
-    "expected_score_band": "B",
-    "expected_tier": "Tier 2"
-  },
-  {
-    "id": 91006,
-    "name": "Pioneer Data Networks",
-    "expected_revenue_segment": "Low",
-    "expected_score_band": "C",
-    "expected_tier": "Tier 3"
-  },
-  {
-    "id": 91007,
-    "name": "Sterling Channel Group",
-    "expected_revenue_segment": "High",
-    "expected_score_band": "A",
-    "expected_tier": "Tier 1"
-  },
-  {
-    "id": 91008,
-    "name": "Bluecrest Telecom Solutions",
-    "expected_revenue_segment": "Medium",
-    "expected_score_band": "B",
-    "expected_tier": "Tier 2"
+{
+  "version": "2026-04-28",
+  "notes": "Fixed calibration sample for ranking quality checks. Expected ordering is strongest-to-weakest.",
+  "expected_order": [
+    92001,
+    92004,
+    92002,
+    92005,
+    92003,
+    92006,
+    92007,
+    92008
+  ],
+  "records": [
+    {
+      "id": 92001,
+      "name": "Quantum CX Labs",
+      "revenue": 83000000,
+      "employees": "501-1000",
+      "credit_score": 74,
+      "credit_description": "Good Creditworthiness",
+      "adopter_profile": "Innovator",
+      "channel_role": "Reseller",
+      "channel_segment": "Enterprise",
+      "tech_stack": ["UCaaS", "CCaaS", "Teams", "Microsoft 365", "Cloud Services"],
+      "partners": ["MICROSOFT", "CISCO", "GAMMA", "VODAFONE"]
+    },
+    {
+      "id": 92002,
+      "name": "Nova Unified Networks",
+      "revenue": 62000000,
+      "employees": "201-500",
+      "credit_score": 31,
+      "credit_description": "Caution - Credit at your discretion",
+      "adopter_profile": "Early adopter",
+      "channel_role": "Reseller",
+      "channel_segment": "Enterprise",
+      "tech_stack": ["UCaaS", "Teams", "Microsoft 365", "Cloud Services", "Managed IT"],
+      "partners": ["MICROSOFT", "CISCO", "BT"]
+    },
+    {
+      "id": 92003,
+      "name": "Harbor Partner Alliance",
+      "revenue": 18000000,
+      "employees": "51-200",
+      "credit_score": 72,
+      "credit_description": "Good Creditworthiness",
+      "adopter_profile": "Early majority",
+      "channel_role": "Distributor",
+      "channel_segment": "Enterprise",
+      "tech_stack": ["Telecommunications", "Cloud Services", "IT Services"],
+      "partners": ["MICROSOFT", "CISCO", "AVAYA", "GAMMA", "BT", "FORTINET"]
+    },
+    {
+      "id": 92004,
+      "name": "Summit Modernization Co",
+      "revenue": 50000000,
+      "employees": "201-500",
+      "credit_score": 72,
+      "credit_description": "Good Creditworthiness",
+      "adopter_profile": "Innovator",
+      "channel_role": "Reseller",
+      "channel_segment": "Enterprise",
+      "tech_stack": ["UCaaS", "CCaaS", "Teams", "Cloud Services", "Managed IT", "Security", "Automation"],
+      "partners": ["MICROSOFT", "BT"]
+    },
+    {
+      "id": 92005,
+      "name": "Balanced Growth Telecom",
+      "revenue": 28000000,
+      "employees": "51-200",
+      "credit_score": 66,
+      "credit_description": "Creditworthy",
+      "adopter_profile": "Early adopter",
+      "channel_role": "Reseller",
+      "channel_segment": "SMB",
+      "tech_stack": ["UCaaS"],
+      "partners": ["MICROSOFT", "GAMMA"]
+    },
+    {
+      "id": 92006,
+      "name": "Low Fit Credit Safe Ltd",
+      "revenue": 25000000,
+      "employees": "51-200",
+      "credit_score": 85,
+      "credit_description": "Very Good Creditworthiness",
+      "adopter_profile": "Late majority",
+      "channel_role": "Consultant",
+      "channel_segment": "SMB",
+      "tech_stack": ["Connectivity"],
+      "partners": ["MITEL"]
+    },
+    {
+      "id": 92007,
+      "name": "Legacy Switching House",
+      "revenue": 19000000,
+      "employees": "11-50",
+      "credit_score": 75,
+      "credit_description": "Good Creditworthiness",
+      "adopter_profile": "Late majority",
+      "channel_role": "Wholesaler",
+      "channel_segment": "SMB",
+      "tech_stack": ["Telecommunications"],
+      "partners": ["AVAYA"]
+    },
+    {
+      "id": 92008,
+      "name": "Minimal Signals LLP",
+      "revenue": 7000000,
+      "employees": "1-10",
+      "credit_score": 0,
+      "credit_description": "Not Scored",
+      "adopter_profile": "Sceptic",
+      "channel_role": "Consultant",
+      "channel_segment": "SMB",
+      "tech_stack": [],
+      "partners": []
+    }
+  ],
+  "validation_groups": {
+    "high_tech_fit_ids": [92001, 92002, 92004, 92005],
+    "low_credit_strong_fit_ids": [92002],
+    "credit_safe_low_fit_ids": [92006],
+    "adoption_partner_parity_pair": [92003, 92004]
   }
-]
+}

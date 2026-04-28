@@ -37,13 +37,11 @@ If that request fails, it falls back to the inline compressed backup (`DATA_B64`
 ### Calibration sample file
 
 - **Calibration filename:** `data/calibration_set.json`
-- **Purpose:** Small curated sample to validate scoring/tiering behavior after weight changes.
-- **Expected fields per calibration sample:**
-  - `id`
-  - `name`
-  - `expected_revenue_segment`
-  - `expected_score_band`
-  - `expected_tier`
+- **Purpose:** Fixed curated sample to validate scoring/ranking behavior after threshold tuning.
+- **Structure:**
+  - `records` (array of sample companies)
+  - `expected_order` (array of record ids in expected strongest-to-weakest order)
+  - `validation_groups` (grouped ids for targeted checks)
 
 ### Required fields for safe filtering
 
@@ -83,6 +81,14 @@ Use this process whenever tuning model/heuristic weights:
 1. Run a fresh ranking and export/snapshot results.
 2. Review the **top 20** and **bottom 20** ranked accounts for obvious false positives/negatives.
 3. Cross-check those results with the curated samples in `data/calibration_set.json`.
-4. Adjust score weights and/or threshold cutoffs.
+4. Adjust threshold cutoffs (keep dimension weights unchanged unless business owners explicitly request a weight change).
 5. Re-run ranking and verify expected calibration outputs.
 6. Re-validate reason-code explainability with channel sales stakeholders.
+
+For repeatable validation and evidence capture, run:
+
+```bash
+node scripts/calibration_audit.js
+```
+
+This updates `data/top20_before_after.md` with a before/after top-20 ranking comparison.

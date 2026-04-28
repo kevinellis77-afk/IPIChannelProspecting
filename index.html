@@ -2268,6 +2268,11 @@ const SCORING_CONFIG = {
       excellentMin: 80,
       goodMin: 60,
       cautionMin: 40
+    },
+    creditAdjustments: {
+      lowScorePenalty: -0.5,
+      cautionDescriptionPenalty: -0.5,
+      notScoredPenalty: -0.25
     }
   },
   signalMaps: {
@@ -2297,9 +2302,9 @@ const SCORING_CONFIG = {
     }
   },
   priorityTierCutoffs: {
-    tier1: 80,
-    tier2: 60,
-    tier3: 40
+    tier1: 78,
+    tier2: 58,
+    tier3: 38
   }
 };
 
@@ -2340,19 +2345,21 @@ function clampRange(value, min, max) {
 function computeCreditAdjustment(creditScore, creditDescription) {
   const score = Number(creditScore) || 0;
   const description = String(creditDescription || '').toLowerCase();
+  const creditThresholds = SCORING_CONFIG.thresholds.creditScore;
+  const creditAdjustments = SCORING_CONFIG.thresholds.creditAdjustments;
 
   let adjustment = 0;
-  if (score >= 80) adjustment = 1.5;
-  else if (score >= 60) adjustment = 1;
-  else if (score >= 40) adjustment = 0;
-  else if (score > 0) adjustment = -1;
+  if (score >= creditThresholds.excellentMin) adjustment = 1.5;
+  else if (score >= creditThresholds.goodMin) adjustment = 1;
+  else if (score >= creditThresholds.cautionMin) adjustment = 0;
+  else if (score > 0) adjustment = creditAdjustments.lowScorePenalty;
 
   if (description.includes('very good')) adjustment += 0.5;
   else if (description.includes('good')) adjustment += 0.25;
-  else if (description.includes('caution')) adjustment -= 1;
-  else if (description.includes('not scored')) adjustment -= 0.5;
+  else if (description.includes('caution')) adjustment += creditAdjustments.cautionDescriptionPenalty;
+  else if (description.includes('not scored')) adjustment += creditAdjustments.notScoredPenalty;
 
-  return clampRange(Math.round(adjustment), -2, 2);
+  return clampRange(adjustment, -2, 2);
 }
 
 function formatContribution(points, dimensionLabel, message, lowImpact = false) {
@@ -2448,8 +2455,9 @@ function computeProspectScore(r) {
   // - 20 points: 3-4 core UC/CX signals (UCaaS, CCaaS, Telephony, Teams)
   // - 16 points: 2 core signals
   // - 12 points: 1 core + >=1 complementary OR >=2 complementary signals
-  // - 6 points: 1 complementary signal only
-  // - 2 points: Minimal/no relevant stack evidence
+  // - 8 points: 1 core signal only
+  // - 4 points: 1 complementary signal only
+  // - 0 points: Minimal/no relevant stack evidence
   if (matchedCoreSignals.length >= 3) subscores.technologySignals = 20;
   else if (matchedCoreSignals.length >= 2) subscores.technologySignals = 16;
   else if (
@@ -2457,10 +2465,12 @@ function computeProspectScore(r) {
     matchedComplementarySignals.length >= 2
   ) {
     subscores.technologySignals = 12;
+  } else if (matchedCoreSignals.length === 1) {
+    subscores.technologySignals = 8;
   } else if (matchedComplementarySignals.length === 1) {
-    subscores.technologySignals = 6;
+    subscores.technologySignals = 4;
   } else {
-    subscores.technologySignals = 2;
+    subscores.technologySignals = 0;
   }
   if (subscores.technologySignals > 0) {
     const uniqueCoreSignals = [...new Set(matchedCoreSignals.map(s => s.toUpperCase()))];
