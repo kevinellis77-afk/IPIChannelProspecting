@@ -623,6 +623,18 @@
   .email-status { font-size: 10px; padding: 1px 6px; border-radius: 3px; margin-left: 6px; }
   .email-status.deliverable { background: rgba(0,229,160,0.15); color: var(--accent); }
   .email-status.risky { background: rgba(255,107,53,0.15); color: var(--accent3); }
+  .edit-form { display: grid; gap: 10px; }
+  .edit-grid { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+  .edit-field { display: flex; flex-direction: column; gap: 4px; }
+  .edit-field.full { grid-column: 1 / -1; }
+  .edit-label { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--text3); font-family: 'Syne', sans-serif; }
+  .edit-input {
+    background: var(--surface2); border: 1px solid var(--border2); border-radius: 7px;
+    padding: 8px 10px; color: var(--text2); font-family: 'DM Mono', monospace; font-size: 11px; outline: none;
+  }
+  .edit-input.error { border-color: var(--danger); }
+  .field-error { min-height: 12px; font-size: 10px; color: var(--danger); font-family: 'DM Mono', monospace; }
+  .edit-actions { display: flex; justify-content: flex-end; }
 
   /* PROSPECT LISTS PANEL */
   .lists-panel {
@@ -1702,11 +1714,112 @@ function normalizeRecord(raw, idx) {
     website: asString(pick('website', 'Website')),
     phone: asString(pick('phone', 'Phone')),
     company_email: asString(pick('company_email', 'Company Email')),
-    linkedin: asString(pick('linkedin', 'LinkedIn'))
+    linkedin: asString(pick('linkedin', 'LinkedIn')),
+    ch_link: asString(pick('ch_link', 'Companies House Link'))
   };
 
   if (!record.name) record.name = record.domain || `Company ${record.id}`;
   return record;
+}
+
+const EDIT_ENUMS = {
+  channelRole: ['Consultant', 'Distributor', 'Reseller', 'Vendor', 'Wholesaler'],
+  channelSegment: ['Data Analytics', 'Digital Web Services', 'Hardware and Software', 'ICT', 'IT Services and Support', 'Managed Services Provider', 'Software Development', 'Telco | Network', 'Telco | Network | AltNet', 'Voice'],
+  adopterProfile: ['Early adopter', 'Early majority', 'Innovator', 'Late majority', 'Sceptic'],
+  creditDescription: ['Caution - Credit at your discretion', 'Creditworthy', 'Good Creditworthiness', 'Not Scored', 'Very Good Creditworthiness'],
+  country: ['ENGLAND', 'NORTHERN IRELAND', 'SCOTLAND', 'WALES'],
+  varType: ['VAR', 'White Label', 'ZZZZZNotApplicable']
+};
+
+function sanitizeSafeText(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, '');
+}
+
+function canonicalEnumValue(input, allowedValues, { uppercase = false } = {}) {
+  const cleaned = sanitizeSafeText(input);
+  if (!cleaned) return '';
+  const cleanedKey = uppercase ? cleaned.toUpperCase() : cleaned.toLowerCase();
+  const match = allowedValues.find(val => (uppercase ? val.toUpperCase() : val.toLowerCase()) === cleanedKey);
+  return match || '';
+}
+
+function normalizeUrlField(value) {
+  const raw = sanitizeSafeText(value);
+  if (!raw) return '';
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const parsed = new URL(withProtocol);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return { error: 'Use a valid http(s) URL' };
+    return { value: parsed.toString() };
+  } catch (err) {
+    return { error: 'Use a valid URL' };
+  }
+}
+
+function validateAndNormalizeEditForm(formData) {
+  const errors = {};
+  const currentYear = new Date().getUTCFullYear();
+
+  const normalized = {
+    name: sanitizeSafeText(formData.name),
+    website: '',
+    linkedin: '',
+    ch_link: '',
+    revenue: 0,
+    credit_score: 0,
+    year_founded: null,
+    channel_role: '',
+    channel_segment: '',
+    adopter_profile: '',
+    credit_description: '',
+    country: '',
+    var_type: ''
+  };
+
+  if (!normalized.name) errors.name = 'Company name is required';
+
+  ['website', 'linkedin', 'ch_link'].forEach(key => {
+    const parsed = normalizeUrlField(formData[key]);
+    if (parsed.error) errors[key] = parsed.error;
+    else normalized[key] = parsed.value || '';
+  });
+
+  const revenue = Number(String(formData.revenue || '').replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(revenue) || revenue < 0) errors.revenue = 'Revenue must be a valid number ≥ 0';
+  else normalized.revenue = Math.round(revenue);
+
+  const creditScore = Number(String(formData.credit_score || '').replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(creditScore) || creditScore < 0 || creditScore > 100) errors.credit_score = 'Credit score must be between 0 and 100';
+  else normalized.credit_score = Math.round(creditScore);
+
+  const yearFounded = Number(String(formData.year_founded || '').replace(/[^0-9]/g, ''));
+  if (!Number.isInteger(yearFounded) || yearFounded < 1700 || yearFounded > currentYear) {
+    errors.year_founded = `Year founded must be between 1700 and ${currentYear}`;
+  } else normalized.year_founded = yearFounded;
+
+  normalized.channel_role = canonicalEnumValue(formData.channel_role, EDIT_ENUMS.channelRole);
+  if (!normalized.channel_role) errors.channel_role = 'Choose a valid channel role';
+
+  normalized.channel_segment = canonicalEnumValue(formData.channel_segment, EDIT_ENUMS.channelSegment);
+  if (!normalized.channel_segment) errors.channel_segment = 'Choose a valid segment';
+
+  normalized.adopter_profile = canonicalEnumValue(formData.adopter_profile, EDIT_ENUMS.adopterProfile);
+  if (!normalized.adopter_profile) errors.adopter_profile = 'Choose a valid adopter profile';
+
+  normalized.credit_description = canonicalEnumValue(formData.credit_description, EDIT_ENUMS.creditDescription);
+  if (!normalized.credit_description) errors.credit_description = 'Choose a valid credit rating';
+
+  normalized.country = canonicalEnumValue(formData.country, EDIT_ENUMS.country, { uppercase: true });
+  if (!normalized.country) errors.country = 'Choose a valid country';
+
+  normalized.var_type = canonicalEnumValue(formData.var_type, EDIT_ENUMS.varType);
+  if (!normalized.var_type) errors.var_type = 'Choose a valid VAR type';
+
+  return { valid: Object.keys(errors).length === 0, errors, normalized };
 }
 
 async function fetchExternalDataset() {
@@ -2483,6 +2596,87 @@ function showDetail(r) {
   lockBodyScroll();
 }
 
+function createEditField({ key, label, value, type = 'text', options = [] }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'edit-field';
+  if (type === 'url') wrap.classList.add('full');
+
+  const fieldLabel = document.createElement('label');
+  fieldLabel.className = 'edit-label';
+  fieldLabel.setAttribute('for', `edit_${key}`);
+  fieldLabel.textContent = label;
+
+  let input;
+  if (type === 'select') {
+    input = document.createElement('select');
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = 'Select…';
+    input.appendChild(emptyOption);
+    options.forEach(opt => {
+      const optionEl = document.createElement('option');
+      optionEl.value = opt;
+      optionEl.textContent = opt;
+      input.appendChild(optionEl);
+    });
+  } else {
+    input = document.createElement('input');
+    input.type = type === 'number' ? 'text' : type;
+  }
+  input.id = `edit_${key}`;
+  input.name = key;
+  input.className = 'edit-input';
+  input.value = value == null ? '' : String(value);
+  input.dataset.field = key;
+
+  const err = document.createElement('div');
+  err.className = 'field-error';
+  err.id = `editErr_${key}`;
+
+  wrap.appendChild(fieldLabel);
+  wrap.appendChild(input);
+  wrap.appendChild(err);
+  return wrap;
+}
+
+function applyEditErrors(errors) {
+  document.querySelectorAll('.edit-input').forEach(input => {
+    const key = input.dataset.field;
+    const hasError = !!errors[key];
+    input.classList.toggle('error', hasError);
+    const errorEl = document.getElementById(`editErr_${key}`);
+    if (errorEl) errorEl.textContent = hasError ? errors[key] : '';
+  });
+}
+
+function saveRecordEdits(recordId, event) {
+  event.preventDefault();
+  const record = allData.find(r => r.id === recordId);
+  if (!record) return;
+  const form = document.getElementById(`editForm_${recordId}`);
+  if (!form) return;
+
+  const formData = Object.fromEntries(new FormData(form).entries());
+  const { valid, errors, normalized } = validateAndNormalizeEditForm(formData);
+  applyEditErrors(errors);
+  if (!valid) {
+    toast('Fix validation errors before saving');
+    return;
+  }
+
+  Object.assign(record, normalized);
+  const score = computeProspectScore(record);
+  record.totalScore = score.totalScore;
+  record.prospectScore = score;
+  companyScoreMap.set(record.id, score);
+
+  buildFilterChips();
+  applyFilters();
+  renderDetailBody(record);
+  document.getElementById('modalSubtitle').textContent = `${record.industry || ''} ${record.city ? '· ' + record.city : ''} ${record.country ? '· ' + record.country : ''}`;
+  toast('Company details updated');
+}
+
 function renderDetailBody(r) {
   const modalBody = document.getElementById('modalBody');
   modalBody.innerHTML = '';
@@ -2722,6 +2916,43 @@ function renderDetailBody(r) {
     peopleSection.appendChild(p);
   }
   colB.appendChild(peopleSection);
+
+  const editSection = mkSection('Edit Company');
+  const form = document.createElement('form');
+  form.className = 'edit-form';
+  form.id = `editForm_${r.id}`;
+  form.addEventListener('submit', (event) => saveRecordEdits(r.id, event));
+  const editGrid = document.createElement('div');
+  editGrid.className = 'edit-grid';
+
+  [
+    { key: 'name', label: 'Company Name', value: r.name },
+    { key: 'channel_role', label: 'Channel Role', value: r.channel_role, type: 'select', options: EDIT_ENUMS.channelRole },
+    { key: 'channel_segment', label: 'Channel Segment', value: r.channel_segment, type: 'select', options: EDIT_ENUMS.channelSegment },
+    { key: 'adopter_profile', label: 'Adopter Profile', value: r.adopter_profile, type: 'select', options: EDIT_ENUMS.adopterProfile },
+    { key: 'credit_description', label: 'Credit Rating', value: r.credit_description, type: 'select', options: EDIT_ENUMS.creditDescription },
+    { key: 'country', label: 'Country', value: String(r.country || '').toUpperCase(), type: 'select', options: EDIT_ENUMS.country },
+    { key: 'var_type', label: 'VAR Type', value: r.var_type, type: 'select', options: EDIT_ENUMS.varType },
+    { key: 'revenue', label: 'Revenue', value: r.revenue, type: 'number' },
+    { key: 'credit_score', label: 'Credit Score', value: r.credit_score, type: 'number' },
+    { key: 'year_founded', label: 'Year Founded', value: r.year_founded, type: 'number' },
+    { key: 'website', label: 'Website URL', value: r.website, type: 'url' },
+    { key: 'linkedin', label: 'LinkedIn URL', value: r.linkedin, type: 'url' },
+    { key: 'ch_link', label: 'Companies House URL', value: r.ch_link, type: 'url' }
+  ].forEach(field => editGrid.appendChild(createEditField(field)));
+
+  const actionRow = document.createElement('div');
+  actionRow.className = 'edit-actions';
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'submit';
+  saveBtn.className = 'btn primary';
+  saveBtn.textContent = 'Save Changes';
+  actionRow.appendChild(saveBtn);
+
+  form.appendChild(editGrid);
+  form.appendChild(actionRow);
+  editSection.appendChild(form);
+  colB.appendChild(editSection);
 
   const liSection = mkSection('Find Contacts on LinkedIn');
   const liWrap = document.createElement('div');
