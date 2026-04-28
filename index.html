@@ -785,6 +785,30 @@
     gap: 8px;
     flex-wrap: wrap;
   }
+  .conflict-picker-group {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 10px;
+    background: var(--surface2);
+  }
+  .conflict-picker-label {
+    font-size: 11px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 6px;
+  }
+  .conflict-picker-select {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+  }
 
   /* NEW LIST INPUT */
   .new-list-form {
@@ -1659,6 +1683,23 @@
   </div>
 </div>
 
+<div class="overlay" id="mergeConflictOverlay" onclick="closeMergeConflictModal(event)">
+  <div class="list-modal" onclick="event.stopPropagation()">
+    <div class="sidebar-header">
+      <div>
+        <div class="modal-title">Resolve Merge Conflicts</div>
+        <div class="modal-subtitle" id="mergeConflictSubtitle"></div>
+      </div>
+      <button class="close-btn" aria-label="Close merge conflict modal" onclick="closeMergeConflictModal()">×</button>
+    </div>
+    <div style="padding:16px 24px;" id="mergeConflictBody"></div>
+    <div style="padding:0 24px 20px; display:flex; gap:8px; justify-content:flex-end;">
+      <button class="btn" onclick="closeMergeConflictModal()">Cancel</button>
+      <button class="btn primary" id="applyMergeBtn" onclick="submitMergeConflictModal()">Apply Merge</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" aria-live="polite" role="status"></div>
 <input type="file" id="overridesImportInput" accept="application/json,.json" style="display:none" onchange="handleOverridesImportFile(event)">
 
@@ -1683,6 +1724,7 @@ let duplicateCandidateStats = {
 let activeOverlayCount = 0;
 let includeScoringAuditExport = false;
 let activeTab = 'explore';
+let pendingMergeConflictGroup = null;
 
 const DEDUPE_DECISIONS_STORAGE_KEY = 'ukchannel_dedupe_decisions';
 const DUPLICATE_REVIEW_FIELDS = [
@@ -1695,6 +1737,14 @@ const DUPLICATE_REVIEW_FIELDS = [
   ['employees', 'Employees'],
   ['credit_description', 'Credit'],
   ['dir1_email', 'Primary Contact Email']
+];
+const CONTENTIOUS_MERGE_FIELDS = [
+  ['name', 'Company Name'],
+  ['revenue', 'Revenue'],
+  ['dir1_email', 'Primary Contact Email'],
+  ['dir1_first', 'Primary Contact First Name'],
+  ['dir1_last', 'Primary Contact Last Name'],
+  ['dir1_role', 'Primary Contact Role']
 ];
 const CANONICAL_OVERRIDES_STORAGE_KEY = 'ukchannel_canonical_overrides';
 const LEGACY_OVERRIDES_STORAGE_KEY = 'ukchannel_overrides';
@@ -3168,7 +3218,8 @@ function applyFilters() {
   const search = document.getElementById('searchInput').value.toLowerCase();
   activeFilters.search = search;
 
-  filteredData = allData.filter(r => {
+  const primaryViewData = allData.filter(record => String(record.duplicate_status || '').toLowerCase() !== 'merged');
+  filteredData = primaryViewData.filter(r => {
     if (search) {
       const hay = `${r.name} ${r.domain} ${r.city} ${r.county} ${r.keywords}`.toLowerCase();
       if (!hay.includes(search)) return false;
@@ -4430,14 +4481,121 @@ function clearDedupeDecisionForRecord(recordId) {
   });
 }
 
-function applyDuplicateGroupDecision(recordIds, decision) {
+function getDisplayFieldValue(record, field) {
+  const raw = record ? record[field] : '';
+  if (Array.isArray(raw)) return raw.join(', ');
+  return String(raw || '').trim();
+}
+
+function chooseFieldValueByPrecedence(records, field) {
+  const values = records
+    .map(record => ({ record, value: record[field] }))
+    .filter(item => {
+      if (Array.isArray(item.value)) return item.value.length > 0;
+      return String(item.value || '').trim().length > 0;
+    });
+  if (!values.length) return '';
+
+  const normalized = [...new Set(values.map(item => normalizeComparisonValue(item.value)).filter(Boolean))];
+  if (normalized.length === 1) return values[0].value;
+
+  if (field === 'revenue') {
+    return values
+      .filter(item => Number.isFinite(Number(item.value)))
+      .sort((a, b) => Number(b.value) - Number(a.value))[0]?.value || 0;
+  }
+  if (field === 'employees') {
+    return values.sort((a, b) => parseEmployeeBandHigh(b.value) - parseEmployeeBandHigh(a.value))[0].value;
+  }
+  if (['website', 'linkedin', 'ch_link'].includes(field)) {
+    const https = values.find(item => isValidHttpsUrl(item.value));
+    if (https) return normalizeUrlField(https.value).value || '';
+    const fallback = normalizeUrlField(values[0].value);
+    return fallback.value || '';
+  }
+  if (['tech_stack', 'partners'].includes(field)) {
+    const union = uniqueCaseInsensitive(records.flatMap(record => Array.isArray(record[field]) ? record[field] : []));
+    return union;
+  }
+  return values[0].value;
+}
+
+function collectContentiousFieldChoices(records) {
+  return CONTENTIOUS_MERGE_FIELDS
+    .map(([field, label]) => {
+      const candidates = records
+        .map(record => ({
+          recordId: record.id,
+          recordName: record.name || `Record ${record.id}`,
+          value: getDisplayFieldValue(record, field)
+        }))
+        .filter(item => item.value);
+      const uniqueValues = [...new Set(candidates.map(item => item.value.toLowerCase()))];
+      if (uniqueValues.length <= 1) return null;
+      return { field, label, candidates };
+    })
+    .filter(Boolean);
+}
+
+function buildCanonicalMergePatch(records, selectionMap = {}) {
+  const canonicalRecordId = Number(selectionMap.__canonical_record_id) || records[0].id;
+  const canonicalBase = buildCanonicalEntityFromRecords(records, {
+    revenueMode: selectionMap.revenue ? 'user-selected' : 'highest-recent',
+    revenueSourceRecordId: selectionMap.revenue || null
+  });
+  const patch = {
+    name: canonicalBase?.name || chooseFieldValueByPrecedence(records, 'name'),
+    revenue: Number(canonicalBase?.revenue || chooseFieldValueByPrecedence(records, 'revenue') || 0),
+    employees: canonicalBase?.employees || chooseFieldValueByPrecedence(records, 'employees'),
+    tech_stack: canonicalBase?.tech_stack || chooseFieldValueByPrecedence(records, 'tech_stack'),
+    partners: canonicalBase?.partners || chooseFieldValueByPrecedence(records, 'partners'),
+    website: canonicalBase?.links?.website || chooseFieldValueByPrecedence(records, 'website'),
+    linkedin: canonicalBase?.links?.linkedin || chooseFieldValueByPrecedence(records, 'linkedin'),
+    ch_link: canonicalBase?.links?.ch_link || chooseFieldValueByPrecedence(records, 'ch_link'),
+    member_record_ids: uniqueCaseInsensitive(records.map(record => String(record.id))).map(Number),
+    canonical_entity_id: canonicalBase?.canonical_entity_id || `entity:${records[0].domain_key || canonicalRecordId}`
+  };
+
+  const precedenceFields = ['industry', 'city', 'county', 'country', 'channel_role', 'channel_segment', 'adopter_profile', 'var_type', 'credit_description', 'credit_score', 'year_founded', 'keywords', 'phone', 'company_email', 'dir1_email', 'dir1_first', 'dir1_last', 'dir1_role'];
+  precedenceFields.forEach(field => {
+    patch[field] = chooseFieldValueByPrecedence(records, field);
+  });
+
+  CONTENTIOUS_MERGE_FIELDS.forEach(([field]) => {
+    const selectedId = Number(selectionMap[field]);
+    if (!Number.isInteger(selectedId)) return;
+    const selectedRecord = records.find(record => record.id === selectedId);
+    if (!selectedRecord) return;
+    patch[field] = selectedRecord[field];
+  });
+
+  return { canonicalRecordId, patch };
+}
+
+function applyDuplicateGroupDecision(recordIds, decision, options = {}) {
   if (!Array.isArray(recordIds) || recordIds.length < 2) return;
+  const records = recordIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
+  if (records.length < 2) return;
   recordIds.forEach(id => clearDedupeDecisionForRecord(id));
 
   if (decision === 'merge') {
-    const [canonicalId, ...others] = recordIds;
-    dedupeDecisions.manual[String(canonicalId)] = { duplicate_status: 'canonical' };
-    others.forEach(id => { dedupeDecisions.manual[String(id)] = { duplicate_status: 'merged' }; });
+    const { canonicalRecordId, patch } = buildCanonicalMergePatch(records, options.selectionMap || {});
+    const mergedIds = recordIds.filter(id => id !== canonicalRecordId);
+    saveRecordOverride(canonicalRecordId, patch, {
+      updated_by: 'Duplicate merge workflow',
+      change_reason: 'Canonical merge outcome'
+    });
+    dedupeDecisions.manual[String(canonicalRecordId)] = {
+      duplicate_status: 'canonical',
+      member_record_ids: patch.member_record_ids
+    };
+    mergedIds.forEach(id => {
+      dedupeDecisions.manual[String(id)] = {
+        duplicate_status: 'merged',
+        canonical_record_id: canonicalRecordId,
+        member_record_ids: patch.member_record_ids
+      };
+    });
   } else if (decision === 'keep-separate') {
     recordIds.forEach(id => { dedupeDecisions.manual[String(id)] = { duplicate_status: 'rejected' }; });
   }
@@ -4456,16 +4614,87 @@ function autoMergeLowConflictGroups() {
   }
   groups.forEach(group => {
     const ids = group.records.map(record => record.id);
-    ids.forEach(id => clearDedupeDecisionForRecord(id));
-    const [canonicalId, ...others] = ids;
-    dedupeDecisions.manual[String(canonicalId)] = { duplicate_status: 'canonical' };
-    others.forEach(id => { dedupeDecisions.manual[String(id)] = { duplicate_status: 'merged' }; });
+    applyDuplicateGroupDecision(ids, 'merge');
   });
-  saveDedupeDecisionsToStorage();
-  rebuildEffectiveDataAndScores();
-  applyFilters();
-  renderDuplicatesReview();
   toast(`Auto-merged ${groups.length} low-conflict groups`);
+}
+
+function openMergeConflictModal(group) {
+  const overlay = document.getElementById('mergeConflictOverlay');
+  const body = document.getElementById('mergeConflictBody');
+  const subtitle = document.getElementById('mergeConflictSubtitle');
+  if (!overlay || !body || !subtitle || !group) return;
+
+  pendingMergeConflictGroup = group;
+  subtitle.textContent = `${group.domainKey} • ${group.records.length} records`;
+  const contentiousFields = collectContentiousFieldChoices(group.records);
+  const defaultCanonicalRecordId = group.records[0]?.id;
+
+  body.innerHTML = '';
+  const canonicalPicker = document.createElement('div');
+  canonicalPicker.className = 'conflict-picker-group';
+  canonicalPicker.innerHTML = `<div class="conflict-picker-label">Canonical anchor record</div>`;
+  const canonicalSelect = document.createElement('select');
+  canonicalSelect.className = 'conflict-picker-select';
+  canonicalSelect.id = 'conflict-select-__canonical_record_id';
+  group.records.forEach(record => {
+    const option = document.createElement('option');
+    option.value = String(record.id);
+    option.textContent = `${record.name || `Record ${record.id}`} (#${record.id})`;
+    if (record.id === defaultCanonicalRecordId) option.selected = true;
+    canonicalSelect.appendChild(option);
+  });
+  canonicalPicker.appendChild(canonicalSelect);
+  body.appendChild(canonicalPicker);
+
+  if (!contentiousFields.length) {
+    const note = document.createElement('div');
+    note.style.color = 'var(--text3)';
+    note.style.fontSize = '12px';
+    note.textContent = 'No contentious fields found. Non-conflicting fields will be merged with precedence rules.';
+    body.appendChild(note);
+  } else {
+    contentiousFields.forEach(conflict => {
+      const wrap = document.createElement('div');
+      wrap.className = 'conflict-picker-group';
+      wrap.innerHTML = `<div class="conflict-picker-label">${conflict.label}</div>`;
+      const select = document.createElement('select');
+      select.className = 'conflict-picker-select';
+      select.id = `conflict-select-${conflict.field}`;
+      conflict.candidates.forEach(candidate => {
+        const option = document.createElement('option');
+        option.value = String(candidate.recordId);
+        option.textContent = `${candidate.recordName} (#${candidate.recordId}) → ${candidate.value}`;
+        select.appendChild(option);
+      });
+      wrap.appendChild(select);
+      body.appendChild(wrap);
+    });
+  }
+
+  overlay.classList.add('open');
+  lockBodyScroll();
+}
+
+function closeMergeConflictModal(event) {
+  if (event && event.target && event.target.id !== 'mergeConflictOverlay') return;
+  const overlay = document.getElementById('mergeConflictOverlay');
+  if (!overlay || !overlay.classList.contains('open')) return;
+  overlay.classList.remove('open');
+  pendingMergeConflictGroup = null;
+  unlockBodyScroll();
+}
+
+function submitMergeConflictModal() {
+  if (!pendingMergeConflictGroup) return;
+  const ids = pendingMergeConflictGroup.records.map(record => record.id);
+  const selectionMap = {};
+  document.querySelectorAll('#mergeConflictBody select[id^="conflict-select-"]').forEach(select => {
+    const key = select.id.replace('conflict-select-', '');
+    selectionMap[key] = Number(select.value);
+  });
+  applyDuplicateGroupDecision(ids, 'merge', { selectionMap });
+  closeMergeConflictModal();
 }
 
 function renderDuplicatesReview() {
@@ -4537,7 +4766,7 @@ function renderDuplicatesReview() {
     const mergeBtn = document.createElement('button');
     mergeBtn.className = 'btn primary';
     mergeBtn.textContent = 'Merge';
-    mergeBtn.addEventListener('click', () => applyDuplicateGroupDecision(group.records.map(r => r.id), 'merge'));
+    mergeBtn.addEventListener('click', () => openMergeConflictModal(group));
     const keepBtn = document.createElement('button');
     keepBtn.className = 'btn';
     keepBtn.textContent = 'Keep Separate';
