@@ -2167,6 +2167,15 @@ function retryLoadData() {
 // FILTER CHIPS
 // ============================================================
 const SCORING_CONFIG = {
+  dimensionWeights: {
+    icp_fit: 35,
+    tech_signals: 20,
+    partner_signals: 12.5,
+    adoption_readiness: 12.5,
+    sales_motion: 10,
+    displacement_expansion: 8,
+    credit_quality: 2
+  },
   dimensions: {
     revenue: 'Revenue Potential',
     employeeScale: 'Employee Scale',
@@ -2227,6 +2236,12 @@ const SCORING_CONFIG = {
     tier3: 40
   }
 };
+
+const SCORING_WEIGHT_TOTAL = Object.values(SCORING_CONFIG.dimensionWeights)
+  .reduce((sum, weight) => sum + Number(weight || 0), 0);
+if (SCORING_WEIGHT_TOTAL !== 100) {
+  throw new Error(`SCORING_CONFIG.dimensionWeights must total exactly 100. Current total: ${SCORING_WEIGHT_TOTAL}`);
+}
 
 function clampScore(value, max) {
   const numericValue = Number(value);
