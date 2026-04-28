@@ -251,6 +251,16 @@
     transition: all 0.15s;
     white-space: nowrap;
   }
+
+  .dataset-status {
+    margin: 0 20px 10px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255,107,53,0.4);
+    border-radius: 8px;
+    background: rgba(255,107,53,0.08);
+    color: #ffb594;
+    font-size: 12px;
+  }
   .btn:hover { border-color: var(--accent); color: var(--text); }
   .btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
   .btn.primary:hover { background: #00ccaa; }
@@ -1105,6 +1115,7 @@
         <button class="btn" onclick="exportCSV('filtered')">⬇ Export Filtered</button>
         <button class="btn" onclick="exportHubspot()">⬇ HubSpot CSV</button>
       </div>
+      <div class="dataset-status" id="datasetStatus" style="display:none;" role="status" aria-live="polite"></div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -1243,23 +1254,24 @@ async function loadData() {
   const loadingEl = document.getElementById('loading');
   const errorEl = document.getElementById('loadingError');
   const errorTextEl = document.getElementById('loadingErrorText');
+  const dataStatusEl = document.getElementById('datasetStatus');
   errorEl.style.display = 'none';
+  if (dataStatusEl) {
+    dataStatusEl.style.display = 'none';
+    dataStatusEl.textContent = '';
+  }
 
   try {
-    const hasDecompressionStream = typeof DecompressionStream !== 'undefined';
-    let parsed = null;
-
-    if (hasDecompressionStream) {
-      parsed = await decodeFromEmbeddedGzip();
-    } else {
-      parsed = await fetchPreDecompressedJSON();
-    }
-
-    allData = parsed;
+    const { data, source } = await loadDatasetWithFallback();
+    allData = data;
     loadingEl.style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     document.getElementById('app').style.flexDirection = 'column';
     document.getElementById('totalCount').textContent = allData.length.toLocaleString();
+    if (source === 'inline_fallback' && dataStatusEl) {
+      dataStatusEl.textContent = 'Using inline backup dataset because data/ukchannel.json could not be loaded.';
+      dataStatusEl.style.display = 'block';
+    }
     buildFilterChips();
     applyFilters();
   } catch (err) {
@@ -1271,12 +1283,34 @@ async function loadData() {
     const loadingText = loadingEl.querySelector('.loading-text');
     if (barWrap) barWrap.style.display = 'none';
     if (loadingText) loadingText.style.display = 'none';
-    errorTextEl.textContent = 'Unable to decode dataset in this browser. Retry, then hard-refresh. If it still fails, ensure data/companies.json is reachable.';
+    errorTextEl.textContent = 'Unable to load dataset from external or inline sources. Retry, then hard-refresh. If it still fails, ensure data/ukchannel.json is reachable.';
     console.error('[loadData] failed', err);
   }
 }
 
+async function loadDatasetWithFallback() {
+  try {
+    const external = await fetchExternalDataset();
+    return { data: external, source: 'external' };
+  } catch (err) {
+    console.warn('[loadData][external] failed, falling back to inline DATA_B64', err);
+  }
+
+  const inline = await decodeFromEmbeddedGzip();
+  return { data: inline, source: 'inline_fallback' };
+}
+
+async function fetchExternalDataset() {
+  const res = await fetch('data/ukchannel.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+
 async function decodeFromEmbeddedGzip() {
+  if (typeof DecompressionStream === 'undefined') {
+    return fetchPreDecompressedJSON();
+  }
+
   let binary;
   let bytes;
   let output;
@@ -1299,8 +1333,8 @@ async function decodeFromEmbeddedGzip() {
     output = await new Response(ds.readable).arrayBuffer();
     text = new TextDecoder().decode(output);
   } catch (err) {
-    console.error('[loadData][gzip] failed, attempting data/companies.json fallback', err);
-    return fetchPreDecompressedJSON();
+    console.error('[loadData][gzip] failed', err);
+    throw err;
   }
 
   try {
@@ -1312,14 +1346,9 @@ async function decodeFromEmbeddedGzip() {
 }
 
 async function fetchPreDecompressedJSON() {
-  try {
-    const res = await fetch('data/companies.json', { cache: 'no-store' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch (err) {
-    console.error('[loadData][fallback fetch] failed', err);
-    throw err;
-  }
+  const res = await fetch('data/companies.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
 }
 
 function retryLoadData() {
