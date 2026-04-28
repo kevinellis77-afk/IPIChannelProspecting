@@ -1363,7 +1363,22 @@ function normalizeRecord(raw, idx) {
   return record;
 }
 
+function getDatasetMode() {
+  const modeFromURL = new URLSearchParams(window.location.search).get('dataset_mode');
+  const modeFromStorage = localStorage.getItem('ukchannel_dataset_mode');
+  const mode = (modeFromURL || modeFromStorage || '').toLowerCase();
+  return mode === 'inline_fallback' ? 'inline_fallback' : 'external_first';
+}
+
 async function loadDatasetWithFallback() {
+  const datasetMode = getDatasetMode();
+
+  if (datasetMode === 'inline_fallback') {
+    console.warn('[loadData] inline fallback mode forced via dataset_mode override.');
+    const inline = await decodeFromEmbeddedGzip();
+    return { data: inline, source: 'inline_fallback' };
+  }
+
   try {
     const external = await fetchExternalDataset();
     return { data: external, source: 'external' };
@@ -1383,7 +1398,7 @@ async function fetchExternalDataset() {
 
 async function decodeFromEmbeddedGzip() {
   if (typeof DecompressionStream === 'undefined') {
-    return fetchPreDecompressedJSON();
+    throw new Error('Inline fallback unavailable: DecompressionStream is not supported in this browser.');
   }
 
   let binary;
@@ -1418,12 +1433,6 @@ async function decodeFromEmbeddedGzip() {
     console.error('[loadData][JSON parse] failed', err);
     throw err;
   }
-}
-
-async function fetchPreDecompressedJSON() {
-  const res = await fetch('data/companies.json', { cache: 'no-store' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return await res.json();
 }
 
 function retryLoadData() {
