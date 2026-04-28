@@ -1294,6 +1294,18 @@
         <span class="val" id="selectedCount">0</span>
         <span class="lbl">selected</span>
       </div>
+      <div class="stat-pill">
+        <span class="val" id="duplicateGroupCount">0</span>
+        <span class="lbl">dup groups</span>
+      </div>
+      <div class="stat-pill">
+        <span class="val" id="duplicateRecordCount">0</span>
+        <span class="lbl">dup records</span>
+      </div>
+      <div class="stat-pill">
+        <span class="val" id="duplicateUnresolvedCount">0</span>
+        <span class="lbl">unresolved</span>
+      </div>
       <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('explore')">Explore</button>
         <button class="tab-btn" onclick="switchTab('lists')">Prospect Lists</button>
@@ -1566,6 +1578,13 @@ let allData = [];
 let filteredData = [];
 let selectedIds = new Set();
 let companyScoreMap = new Map();
+let domainRecordIndex = new Map();
+let duplicateCandidates = [];
+let duplicateCandidateStats = {
+  totalGroups: 0,
+  totalRecordsInvolved: 0,
+  unresolvedGroups: 0
+};
 let activeOverlayCount = 0;
 let includeScoringAuditExport = false;
 
@@ -1829,6 +1848,45 @@ function rebuildEffectiveDataAndScores() {
       return [company.id, score];
     })
   );
+  rebuildDuplicateCandidateIndex();
+}
+
+function rebuildDuplicateCandidateIndex() {
+  const nextIndex = new Map();
+  allData.forEach(record => {
+    if (!record || !record.domain_key) return;
+    if (!nextIndex.has(record.domain_key)) nextIndex.set(record.domain_key, []);
+    nextIndex.get(record.domain_key).push(record.id);
+  });
+
+  domainRecordIndex = nextIndex;
+  duplicateCandidates = [...domainRecordIndex.values()]
+    .map(recordIds => [...recordIds])
+    .filter(recordIds => recordIds.length > 1);
+
+  const resolvedStatuses = new Set(['resolved', 'merged', 'canonical']);
+  const resolvedRecordIds = new Set(
+    allData
+      .filter(record => resolvedStatuses.has(String(record.duplicate_status || '').trim().toLowerCase()))
+      .map(record => record.id)
+  );
+  const unresolvedGroups = duplicateCandidates.filter(recordIds => !recordIds.every(id => resolvedRecordIds.has(id))).length;
+
+  duplicateCandidateStats = {
+    totalGroups: duplicateCandidates.length,
+    totalRecordsInvolved: duplicateCandidates.reduce((sum, recordIds) => sum + recordIds.length, 0),
+    unresolvedGroups
+  };
+  updateDuplicateCandidateStatsUI();
+}
+
+function updateDuplicateCandidateStatsUI() {
+  const groupEl = document.getElementById('duplicateGroupCount');
+  const recordEl = document.getElementById('duplicateRecordCount');
+  const unresolvedEl = document.getElementById('duplicateUnresolvedCount');
+  if (groupEl) groupEl.textContent = duplicateCandidateStats.totalGroups.toLocaleString();
+  if (recordEl) recordEl.textContent = duplicateCandidateStats.totalRecordsInvolved.toLocaleString();
+  if (unresolvedEl) unresolvedEl.textContent = duplicateCandidateStats.unresolvedGroups.toLocaleString();
 }
 
 function saveRecordOverride(recordId, editedFields, auditMeta = {}) {
