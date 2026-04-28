@@ -2246,7 +2246,7 @@ const SCORING_CONFIG = {
     employeeScale: 15,
     creditQuality: 15,
     partnerSignals: 15,
-    technologySignals: 15,
+    technologySignals: 20,
     adoptionReadiness: 10
   },
   thresholds: {
@@ -2322,7 +2322,6 @@ function computeProspectScore(r) {
   const adopter = String(r.adopter_profile || '').toLowerCase();
   const channelRole = String(r.channel_role || '').toLowerCase();
   const channelSegment = String(r.channel_segment || '').toLowerCase();
-  const industry = String(r.industry || '').toLowerCase();
   const country = String(r.country || '').toLowerCase();
   const foundedYear = Number(r.year_founded);
   const creditDescription = String(r.credit_description || '').toLowerCase();
@@ -2363,12 +2362,33 @@ function computeProspectScore(r) {
   subscores.partnerSignals = partnerPoints;
   if (subscores.partnerSignals >= 8) reasons.push('High-value vendor partnerships');
 
-  let techPoints = 0;
-  Object.entries(SCORING_CONFIG.signalMaps.technology).forEach(([signal, pts]) => {
-    if (normalizedTech.some(t => t.includes(signal))) techPoints += pts;
-  });
-  if (industry.includes('telecom') || industry.includes('communication')) techPoints += 2;
-  subscores.technologySignals = techPoints;
+  const coreTechSignals = ['ucaas', 'ccaas', 'telephony', 'teams'];
+  const complementaryTechSignals = ['microsoft 365', 'cloud services', 'it services'];
+  const matchedCoreSignals = coreTechSignals.filter(signal =>
+    normalizedTech.some(t => t.includes(signal))
+  );
+  const matchedComplementarySignals = complementaryTechSignals.filter(signal =>
+    normalizedTech.some(t => t.includes(signal))
+  );
+
+  // Technology signal bands (0-20):
+  // - 20 points: 3-4 core UC/CX signals (UCaaS, CCaaS, Telephony, Teams)
+  // - 16 points: 2 core signals
+  // - 12 points: 1 core + >=1 complementary OR >=2 complementary signals
+  // - 6 points: 1 complementary signal only
+  // - 2 points: Minimal/no relevant stack evidence
+  if (matchedCoreSignals.length >= 3) subscores.technologySignals = 20;
+  else if (matchedCoreSignals.length >= 2) subscores.technologySignals = 16;
+  else if (
+    (matchedCoreSignals.length === 1 && matchedComplementarySignals.length >= 1) ||
+    matchedComplementarySignals.length >= 2
+  ) {
+    subscores.technologySignals = 12;
+  } else if (matchedComplementarySignals.length === 1) {
+    subscores.technologySignals = 6;
+  } else {
+    subscores.technologySignals = 2;
+  }
   if (subscores.technologySignals >= 8) reasons.push('Relevant modern tech stack');
 
   if (adopter.includes('innovator')) subscores.adoptionReadiness += 10;
