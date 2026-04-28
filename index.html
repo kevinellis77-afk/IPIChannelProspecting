@@ -708,6 +708,84 @@
   .list-card-count { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--accent); }
   .list-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+
+  /* DUPLICATES REVIEW PANEL */
+  .duplicates-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+  }
+  .duplicates-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
+  }
+  .duplicate-group-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .duplicate-group-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+  .duplicate-domain {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    color: var(--accent2);
+  }
+  .duplicate-meta {
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 3px;
+  }
+  .duplicate-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+    margin: 8px 0 12px;
+  }
+  .duplicate-record-card {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 10px;
+  }
+  .duplicate-record-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .duplicate-field-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+    margin-bottom: 5px;
+  }
+  .duplicate-field-key { color: var(--text3); }
+  .duplicate-field-val {
+    color: var(--text);
+    text-align: right;
+    font-family: 'DM Mono', monospace;
+  }
+  .duplicate-field-row.conflict {
+    padding: 3px 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 107, 53, 0.4);
+    background: rgba(255, 107, 53, 0.12);
+  }
+  .duplicate-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
   /* NEW LIST INPUT */
   .new-list-form {
     display: flex;
@@ -1307,8 +1385,9 @@
         <span class="lbl">unresolved</span>
       </div>
       <div class="tab-bar">
-        <button class="tab-btn active" onclick="switchTab('explore')">Explore</button>
-        <button class="tab-btn" onclick="switchTab('lists')">Prospect Lists</button>
+        <button class="tab-btn active" data-tab="explore" onclick="switchTab('explore')">Explore</button>
+        <button class="tab-btn" data-tab="lists" onclick="switchTab('lists')">Prospect Lists</button>
+        <button class="tab-btn" data-tab="duplicates" onclick="switchTab('duplicates')">Duplicates Review</button>
       </div>
     </div>
   </div>
@@ -1523,6 +1602,20 @@
         <div id="listsContainer"></div>
       </div>
     </div>
+
+    <!-- DUPLICATES REVIEW PANEL -->
+    <div class="main" id="duplicatesPanel" style="display:none;">
+      <div class="duplicates-panel">
+        <div class="list-section-header">
+          <h2>Duplicates Review</h2>
+          <div style="font-family:'DM Mono',monospace; font-size:12px; color:var(--text3);" id="duplicatesSubtitle"></div>
+        </div>
+        <div class="duplicates-toolbar">
+          <button class="btn" onclick="autoMergeLowConflictGroups()">⚡ Auto-merge low-conflict groups</button>
+        </div>
+        <div id="duplicatesReviewContainer"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1589,8 +1682,20 @@ let duplicateCandidateStats = {
 };
 let activeOverlayCount = 0;
 let includeScoringAuditExport = false;
+let activeTab = 'explore';
 
 const DEDUPE_DECISIONS_STORAGE_KEY = 'ukchannel_dedupe_decisions';
+const DUPLICATE_REVIEW_FIELDS = [
+  ['name', 'Company'],
+  ['industry', 'Industry'],
+  ['city', 'City'],
+  ['country', 'Country'],
+  ['channel_role', 'Role'],
+  ['channel_segment', 'Segment'],
+  ['employees', 'Employees'],
+  ['credit_description', 'Credit'],
+  ['dir1_email', 'Primary Contact Email']
+];
 const CANONICAL_OVERRIDES_STORAGE_KEY = 'ukchannel_canonical_overrides';
 const LEGACY_OVERRIDES_STORAGE_KEY = 'ukchannel_overrides';
 const OVERRIDES_SCHEMA_VERSION = 1;
@@ -3148,6 +3253,7 @@ function applyFilters() {
   document.getElementById('tbFilteredCount').textContent = filteredData.length.toLocaleString();
   renderTable();
   updateAddToListBtn();
+  if (activeTab === 'duplicates') renderDuplicatesReview();
 }
 
 function sortBy(field) {
@@ -4271,12 +4377,182 @@ function removeFromListById(listId, companyId) {
 }
 
 function switchTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    b.classList.toggle('active', (tab === 'explore' && i === 0) || (tab === 'lists' && i === 1));
+  activeTab = tab;
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(button => {
+    button.classList.toggle('active', button.dataset.tab === tab);
   });
   document.getElementById('explorePanel').style.display = tab === 'explore' ? 'flex' : 'none';
   document.getElementById('listsPanel').style.display = tab === 'lists' ? 'flex' : 'none';
+  document.getElementById('duplicatesPanel').style.display = tab === 'duplicates' ? 'flex' : 'none';
   if (tab === 'lists') renderLists();
+  if (tab === 'duplicates') renderDuplicatesReview();
+}
+
+
+function normalizeComparisonValue(value) {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.map(v => String(v || '').trim().toLowerCase()).filter(Boolean).sort().join('|');
+  return String(value).trim().toLowerCase();
+}
+
+function collectDuplicateReviewGroups() {
+  return duplicateCandidates
+    .map(recordIds => {
+      const records = recordIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
+      if (records.length < 2) return null;
+      const conflicts = new Set();
+      DUPLICATE_REVIEW_FIELDS.forEach(([field]) => {
+        const values = [...new Set(records.map(record => normalizeComparisonValue(record[field])).filter(Boolean))];
+        if (values.length > 1) conflicts.add(field);
+      });
+      const statuses = records.map(record => String(record.duplicate_status || '').toLowerCase());
+      const hasMerged = statuses.some(status => ['merged', 'canonical'].includes(status));
+      const hasRejected = statuses.every(status => status === 'rejected');
+      let decision = 'defer';
+      if (hasMerged) decision = 'merge';
+      else if (hasRejected) decision = 'keep-separate';
+      return {
+        domainKey: records[0].domain_key || records[0].domain || 'unknown-domain',
+        records,
+        conflicts,
+        decision,
+        lowConflict: conflicts.size <= 2
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.records.length - a.records.length || a.domainKey.localeCompare(b.domainKey));
+}
+
+function clearDedupeDecisionForRecord(recordId) {
+  const key = String(recordId);
+  DEDUPE_DECISION_BUCKETS.forEach(bucket => {
+    if (dedupeDecisions[bucket] && dedupeDecisions[bucket][key] !== undefined) delete dedupeDecisions[bucket][key];
+  });
+}
+
+function applyDuplicateGroupDecision(recordIds, decision) {
+  if (!Array.isArray(recordIds) || recordIds.length < 2) return;
+  recordIds.forEach(id => clearDedupeDecisionForRecord(id));
+
+  if (decision === 'merge') {
+    const [canonicalId, ...others] = recordIds;
+    dedupeDecisions.manual[String(canonicalId)] = { duplicate_status: 'canonical' };
+    others.forEach(id => { dedupeDecisions.manual[String(id)] = { duplicate_status: 'merged' }; });
+  } else if (decision === 'keep-separate') {
+    recordIds.forEach(id => { dedupeDecisions.manual[String(id)] = { duplicate_status: 'rejected' }; });
+  }
+
+  saveDedupeDecisionsToStorage();
+  rebuildEffectiveDataAndScores();
+  applyFilters();
+  renderDuplicatesReview();
+}
+
+function autoMergeLowConflictGroups() {
+  const groups = collectDuplicateReviewGroups().filter(group => group.lowConflict && group.decision === 'defer');
+  if (!groups.length) {
+    toast('No low-conflict groups available for auto-merge');
+    return;
+  }
+  groups.forEach(group => {
+    const ids = group.records.map(record => record.id);
+    ids.forEach(id => clearDedupeDecisionForRecord(id));
+    const [canonicalId, ...others] = ids;
+    dedupeDecisions.manual[String(canonicalId)] = { duplicate_status: 'canonical' };
+    others.forEach(id => { dedupeDecisions.manual[String(id)] = { duplicate_status: 'merged' }; });
+  });
+  saveDedupeDecisionsToStorage();
+  rebuildEffectiveDataAndScores();
+  applyFilters();
+  renderDuplicatesReview();
+  toast(`Auto-merged ${groups.length} low-conflict groups`);
+}
+
+function renderDuplicatesReview() {
+  const container = document.getElementById('duplicatesReviewContainer');
+  const subtitle = document.getElementById('duplicatesSubtitle');
+  if (!container || !subtitle) return;
+
+  const groups = collectDuplicateReviewGroups();
+  subtitle.textContent = `${groups.length} duplicate groups`;
+  container.innerHTML = '';
+
+  if (!groups.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.innerHTML = '<h3>No duplicate candidates</h3><p>Domain-based duplicate groups will appear here.</p>';
+    container.appendChild(empty);
+    return;
+  }
+
+  groups.forEach(group => {
+    const card = document.createElement('div');
+    card.className = 'duplicate-group-card';
+
+    const header = document.createElement('div');
+    header.className = 'duplicate-group-header';
+    const left = document.createElement('div');
+    const domain = document.createElement('div');
+    domain.className = 'duplicate-domain';
+    domain.textContent = group.domainKey;
+    const meta = document.createElement('div');
+    meta.className = 'duplicate-meta';
+    meta.textContent = `${group.records.length} records • ${group.conflicts.size} conflicting fields • Status: ${group.decision}`;
+    left.appendChild(domain);
+    left.appendChild(meta);
+    header.appendChild(left);
+    card.appendChild(header);
+
+    const cardsWrap = document.createElement('div');
+    cardsWrap.className = 'duplicate-cards';
+    group.records.forEach(record => {
+      const recordCard = document.createElement('div');
+      recordCard.className = 'duplicate-record-card';
+      const title = document.createElement('div');
+      title.className = 'duplicate-record-title';
+      title.textContent = record.name || `Record ${record.id}`;
+      recordCard.appendChild(title);
+
+      DUPLICATE_REVIEW_FIELDS.forEach(([field, label]) => {
+        const row = document.createElement('div');
+        row.className = `duplicate-field-row${group.conflicts.has(field) ? ' conflict' : ''}`;
+        const key = document.createElement('span');
+        key.className = 'duplicate-field-key';
+        key.textContent = label;
+        const val = document.createElement('span');
+        val.className = 'duplicate-field-val';
+        const rawValue = record[field];
+        val.textContent = Array.isArray(rawValue) ? rawValue.join(', ') || '—' : (rawValue || '—');
+        row.appendChild(key);
+        row.appendChild(val);
+        recordCard.appendChild(row);
+      });
+
+      cardsWrap.appendChild(recordCard);
+    });
+    card.appendChild(cardsWrap);
+
+    const actions = document.createElement('div');
+    actions.className = 'duplicate-actions';
+    const mergeBtn = document.createElement('button');
+    mergeBtn.className = 'btn primary';
+    mergeBtn.textContent = 'Merge';
+    mergeBtn.addEventListener('click', () => applyDuplicateGroupDecision(group.records.map(r => r.id), 'merge'));
+    const keepBtn = document.createElement('button');
+    keepBtn.className = 'btn';
+    keepBtn.textContent = 'Keep Separate';
+    keepBtn.addEventListener('click', () => applyDuplicateGroupDecision(group.records.map(r => r.id), 'keep-separate'));
+    const deferBtn = document.createElement('button');
+    deferBtn.className = 'btn';
+    deferBtn.textContent = 'Defer';
+    deferBtn.addEventListener('click', () => applyDuplicateGroupDecision(group.records.map(r => r.id), 'defer'));
+    actions.appendChild(mergeBtn);
+    actions.appendChild(keepBtn);
+    actions.appendChild(deferBtn);
+    card.appendChild(actions);
+
+    container.appendChild(card);
+  });
 }
 
 function createList() {
