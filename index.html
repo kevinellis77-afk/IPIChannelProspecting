@@ -1591,6 +1591,68 @@ function retryLoadData() {
 // ============================================================
 // FILTER CHIPS
 // ============================================================
+const SCORING_CONFIG = {
+  dimensions: {
+    revenue: 'Revenue Potential',
+    employeeScale: 'Employee Scale',
+    creditQuality: 'Credit Quality',
+    partnerSignals: 'Partner Signals',
+    technologySignals: 'Technology Signals',
+    adoptionReadiness: 'Adoption Readiness'
+  },
+  maxPoints: {
+    revenue: 30,
+    employeeScale: 15,
+    creditQuality: 15,
+    partnerSignals: 15,
+    technologySignals: 15,
+    adoptionReadiness: 10
+  },
+  thresholds: {
+    revenueBands: {
+      enterpriseMin: 80000000, // Enterprise >= 80,000,000
+      midMarketMin: 20000000,  // Mid-Market 20,000,000 to < 80,000,000
+      smbMaxExclusive: 20000000 // SMB < 20,000,000
+    },
+    creditScore: {
+      excellentMin: 80,
+      goodMin: 60,
+      cautionMin: 40
+    }
+  },
+  signalMaps: {
+    vendor: {
+      MICROSOFT: 5,
+      CISCO: 4,
+      AVAYA: 3,
+      GAMMA: 3,
+      VODAFONE: 3,
+      BT: 3,
+      MITEL: 2,
+      VMWARE: 2,
+      SOPHOS: 2,
+      FORTINET: 2
+    },
+    technology: {
+      'microsoft 365': 4,
+      teams: 4,
+      ucaas: 4,
+      ccaas: 4,
+      telephony: 3,
+      telecommunications: 3,
+      connectivity: 2,
+      cloud: 2,
+      'managed it': 2,
+      'it services': 2
+    }
+  },
+  priorityTierCutoffs: {
+    tier1: 80,
+    tier2: 60,
+    tier3: 40
+  }
+};
+
 const EMPLOYEE_ORDER = ['1-5','1-10','6-10','11-50','51-200','201-500','501-1000','1001-5000','5000+'];
 const CREDIT_ORDER = ['Very Good Creditworthiness','Good Creditworthiness','Creditworthy','Caution - Credit at your discretion','Not Scored'];
 
