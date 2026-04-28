@@ -2523,6 +2523,17 @@ function computeProspectScore(r) {
   return { totalScore, subscores, priorityTier, reasonCodes: reasons.slice(0, 5), contributions };
 }
 
+function getScoreForRecord(record) {
+  if (!record) return { totalScore: 0, priorityTier: 'P4', subscores: {}, reasonCodes: [], contributions: [] };
+  const existing = companyScoreMap.get(record.id);
+  if (existing) return existing;
+  const computed = record.prospectScore || computeProspectScore(record);
+  if (record.id != null) companyScoreMap.set(record.id, computed);
+  record.totalScore = computed.totalScore ?? 0;
+  record.prospectScore = computed;
+  return computed;
+}
+
 const EMPLOYEE_ORDER = ['1-5','1-10','6-10','11-50','51-200','201-500','501-1000','1001-5000','5000+'];
 const CREDIT_ORDER = ['Very Good Creditworthiness','Good Creditworthiness','Creditworthy','Caution - Credit at your discretion','Not Scored'];
 
@@ -2698,7 +2709,7 @@ function applyFilters() {
       if (![...activeFilters.country].some(cc => c.includes(cc.split(' ')[0]))) return false;
     }
     if (activeFilters.var_type.size && !activeFilters.var_type.has(r.var_type)) return false;
-    const score = companyScoreMap.get(r.id) || r.prospectScore || computeProspectScore(r);
+    const score = getScoreForRecord(r);
     if ((score.totalScore ?? 0) < (activeFilters.minScore || 0)) return false;
     if (activeFilters.tier.size && !activeFilters.tier.has(score.priorityTier || 'P4')) return false;
     const revenueSegment = classifyRevenueBand(r.revenue);
@@ -2727,14 +2738,16 @@ function applyFilters() {
       return sortSel === 'name_desc' ? -r : r;
     }
     if (sortSel === 'totalScore') {
-      va = companyScoreMap.get(a.id)?.totalScore ?? a.totalScore ?? 0;
-      vb = companyScoreMap.get(b.id)?.totalScore ?? b.totalScore ?? 0;
-      return (vb - va);
+      va = getScoreForRecord(a).totalScore ?? 0;
+      vb = getScoreForRecord(b).totalScore ?? 0;
+      if (vb !== va) return (vb - va);
+      return (a.name || '').localeCompare(b.name || '');
     }
     if (sortSel === 'priorityTier') {
-      va = tierRank(companyScoreMap.get(a.id)?.priorityTier || 'P4');
-      vb = tierRank(companyScoreMap.get(b.id)?.priorityTier || 'P4');
-      return va - vb;
+      va = tierRank(getScoreForRecord(a).priorityTier || 'P4');
+      vb = tierRank(getScoreForRecord(b).priorityTier || 'P4');
+      if (va !== vb) return va - vb;
+      return (getScoreForRecord(b).totalScore || 0) - (getScoreForRecord(a).totalScore || 0);
     }
     if (sortSel === 'revenueSegment') {
       const revenueOrder = { 'Enterprise': 1, 'Mid-Market': 2, 'SMB': 3, 'Unknown': 4 };
@@ -2856,7 +2869,7 @@ function renderTable() {
     const companyLists = getCompanyLists(r.id);
     const inList = companyLists.length > 0;
     const revenueSegment = classifyRevenueBand(r.revenue);
-    const score = companyScoreMap.get(r.id) || r.prospectScore || computeProspectScore(r);
+    const score = getScoreForRecord(r);
     const overrideSummary = getOverrideSummary(r.id);
 
     const tr = document.createElement('tr');
@@ -3357,7 +3370,7 @@ function renderDetailBody(r) {
   addRow(finSection, 'Net Worth', fmt(r.net_worth));
   colA.appendChild(finSection);
 
-  const score = companyScoreMap.get(r.id) || r.prospectScore || computeProspectScore(r);
+  const score = getScoreForRecord(r);
   const scoringSection = mkSection('Prospect Scoring');
   addRow(scoringSection, 'Total Score', `${score.totalScore}/100`);
   const tierNode = document.createElement('span');
@@ -4088,9 +4101,17 @@ const HUBSPOT_FIELDS = [
   ['Country/Region', 'country'], ['Industry', 'industry'], ['Number of Employees', 'employees'],
   ['Phone Number', 'phone'], ['LinkedIn Company Page', 'linkedin'],
   ['Channel Role', 'channel_role'], ['Channel Segment', 'channel_segment'],
+  ['Total Score', r => getExportScoringData(r).totalScore],
   ['Priority Score', r => getExportScoringData(r).priorityScore],
   ['Priority Tier', r => getExportScoringData(r).priorityTier],
+  ['Subscore: Revenue', r => getExportScoringData(r).subscoreRevenue],
+  ['Subscore: Employee Scale', r => getExportScoringData(r).subscoreEmployeeScale],
+  ['Subscore: Credit Quality', r => getExportScoringData(r).subscoreCreditQuality],
+  ['Subscore: Partner Signals', r => getExportScoringData(r).subscorePartnerSignals],
+  ['Subscore: Technology Signals', r => getExportScoringData(r).subscoreTechnologySignals],
+  ['Subscore: Adoption Readiness', r => getExportScoringData(r).subscoreAdoptionReadiness],
   ['Revenue Segment', r => getExportScoringData(r).revenueSegment],
+  ['Reason-Code Summary', r => getExportScoringData(r).reasonCodeSummary],
   ['Top Reason Codes', r => getExportScoringData(r).topReasonCodes],
   ['Technology Stack', r => r.tech_stack.join('; ')],
   ['Partner Ecosystem', r => r.partners.join('; ')],
@@ -4111,7 +4132,7 @@ function toCSVRow(row) {
 }
 
 function getExportScoringData(record) {
-  const score = companyScoreMap.get(record.id) || record.prospectScore || computeProspectScore(record);
+  const score = getScoreForRecord(record);
   const explicitReasonCodes = Array.isArray(record.top_reason_codes)
     ? record.top_reason_codes
     : typeof record.top_reason_codes === 'string'
@@ -4124,9 +4145,17 @@ function getExportScoringData(record) {
       : [];
 
   return {
+    totalScore: score.totalScore ?? 0,
     priorityScore: score.totalScore ?? 0,
     priorityTier: score.priorityTier || 'P4',
+    subscoreRevenue: score.subscores?.revenue ?? 0,
+    subscoreEmployeeScale: score.subscores?.employeeScale ?? 0,
+    subscoreCreditQuality: score.subscores?.creditQuality ?? 0,
+    subscorePartnerSignals: score.subscores?.partnerSignals ?? 0,
+    subscoreTechnologySignals: score.subscores?.technologySignals ?? 0,
+    subscoreAdoptionReadiness: score.subscores?.adoptionReadiness ?? 0,
     revenueSegment: classifyRevenueBand(record.revenue),
+    reasonCodeSummary: reasonCodes.slice(0, 3).join(' | '),
     topReasonCodes: reasonCodes.join('; '),
     scoringAuditTrail: Array.isArray(score.contributions) ? score.contributions.join(' | ') : ''
   };
@@ -4148,7 +4177,10 @@ function buildCSVRows(companies) {
     'Dir 1 Name','Dir 1 Role','Dir 1 Email','Dir 1 Email Status',
     'Dir 2 Name','Dir 2 Role','Dir 2 Email',
     'Dir 3 Name','Dir 3 Role','Dir 3 Email',
-    'Companies House Link','Priority Score','Priority Tier','Revenue Segment','Top Reason Codes'];
+    'Companies House Link','Total Score','Priority Score','Priority Tier',
+    'Subscore Revenue','Subscore Employee Scale','Subscore Credit Quality',
+    'Subscore Partner Signals','Subscore Technology Signals','Subscore Adoption Readiness',
+    'Revenue Segment','Reason-Code Summary','Top Reason Codes'];
   if (includeScoringAuditExport) headers.push('Scoring Audit Trail');
   const rows = [toCSVRow(headers)];
   companies.forEach(r => {
@@ -4162,7 +4194,10 @@ function buildCSVRows(companies) {
       [r.dir1_first, r.dir1_last].filter(Boolean).join(' '), r.dir1_role, r.dir1_email, r.dir1_email_status,
       [r.dir2_first, r.dir2_last].filter(Boolean).join(' '), r.dir2_role, r.dir2_email,
       [r.dir3_first, r.dir3_last].filter(Boolean).join(' '), r.dir3_role, r.dir3_email,
-      r.ch_link, scoringData.priorityScore, scoringData.priorityTier, scoringData.revenueSegment, scoringData.topReasonCodes
+      r.ch_link, scoringData.totalScore, scoringData.priorityScore, scoringData.priorityTier,
+      scoringData.subscoreRevenue, scoringData.subscoreEmployeeScale, scoringData.subscoreCreditQuality,
+      scoringData.subscorePartnerSignals, scoringData.subscoreTechnologySignals, scoringData.subscoreAdoptionReadiness,
+      scoringData.revenueSegment, scoringData.reasonCodeSummary, scoringData.topReasonCodes
     ];
     if (includeScoringAuditExport) rowValues.push(scoringData.scoringAuditTrail);
     rows.push(toCSVRow(rowValues));
