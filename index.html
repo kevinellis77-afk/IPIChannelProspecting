@@ -182,6 +182,7 @@
 
   .chip-grid { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip {
+    appearance: none;
     padding: 5px 10px;
     border-radius: 6px;
     background: var(--surface2);
@@ -195,6 +196,7 @@
     white-space: nowrap;
   }
   .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
   .chip.active { background: rgba(0,229,160,0.12); border-color: var(--accent); color: var(--accent); font-weight: 500; }
   .chip.danger.active { background: rgba(255,71,87,0.12); border-color: var(--danger); color: var(--danger); }
   .chip.blue.active { background: rgba(0,153,255,0.12); border-color: var(--accent2); color: var(--accent2); }
@@ -633,6 +635,11 @@
     display: flex;
     gap: 8px;
     margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .new-list-form .filter-label {
+    width: 100%;
+    margin-bottom: 0;
   }
   .new-list-input {
     flex: 1;
@@ -803,6 +810,8 @@
     flex-shrink: 0;
   }
   .ai-sugg {
+    appearance: none;
+    background: transparent;
     font-size: 11px;
     color: var(--text3);
     border: 1px solid var(--border2);
@@ -814,6 +823,7 @@
     white-space: nowrap;
   }
   .ai-sugg:hover { color: var(--accent); border-color: var(--accent); }
+  .ai-sugg:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
 
   .ai-status {
     margin-top: 10px;
@@ -823,6 +833,15 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .ai-input-label {
+    display: inline-block;
+    margin-bottom: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text3);
   }
   .ai-status .spinner {
     width: 12px; height: 12px;
@@ -914,6 +933,16 @@
     .sidebar { width: 240px; min-width: 240px; }
     .detail-sidebar { width: 100vw; }
   }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible,
+  th[role="button"]:focus-visible {
+    outline: 2px solid var(--accent2);
+    outline-offset: 2px;
+  }
 </style>
 </head>
 <body>
@@ -961,7 +990,7 @@
       </div>
 
       <div class="filter-section">
-        <div class="filter-label">Search</div>
+        <label class="filter-label" for="searchInput">Search</label>
         <input class="search-box" type="text" placeholder="Company name, domain, city..." id="searchInput" oninput="applyFilters()">
       </div>
 
@@ -1018,9 +1047,9 @@
       <div class="filter-section">
         <div class="filter-label">Prospect List Status</div>
         <div class="chip-grid">
-          <div class="chip" id="chip-listed-any" data-listed="any" onclick="toggleListedFilter(this)">All</div>
-          <div class="chip" id="chip-listed-yes" data-listed="yes" onclick="toggleListedFilter(this)">✓ In a list</div>
-          <div class="chip chip-unlisted" id="chip-listed-no" data-listed="no" onclick="toggleListedFilter(this)">Not listed</div>
+          <button type="button" class="chip" id="chip-listed-any" data-listed="any" onclick="toggleListedFilter(this)">All</button>
+          <button type="button" class="chip" id="chip-listed-yes" data-listed="yes" onclick="toggleListedFilter(this)">✓ In a list</button>
+          <button type="button" class="chip chip-unlisted" id="chip-listed-no" data-listed="no" onclick="toggleListedFilter(this)">Not listed</button>
         </div>
       </div>
     </div>
@@ -1030,6 +1059,7 @@
 
       <!-- INTELLIGENT SEARCH -->
       <div class="ai-search-wrap" id="aiSearchWrap">
+        <label class="ai-input-label" for="aiSearchInput">AI Search</label>
         <div class="ai-search-bar">
           <span class="ai-icon">✦</span>
           <input
@@ -1046,13 +1076,13 @@
         </div>
         <div class="ai-suggestions" id="aiSuggestions">
           <span class="ai-sugg-label">Try:</span>
-          <span class="ai-sugg" onclick="setAiQuery(this)">Resellers with CCaaS and more than 10 employees</span>
-          <span class="ai-sugg" onclick="setAiQuery(this)">Innovators or Early adopters in Scotland</span>
-          <span class="ai-sugg" onclick="setAiQuery(this)">Distributors using Microsoft 365 with good credit</span>
-          <span class="ai-sugg" onclick="setAiQuery(this)">Managed service providers in London</span>
-          <span class="ai-sugg" onclick="setAiQuery(this)">Vendors with Avaya or Cisco partnership</span>
+          <button type="button" class="ai-sugg" onclick="setAiQuery(this)">Resellers with CCaaS and more than 10 employees</button>
+          <button type="button" class="ai-sugg" onclick="setAiQuery(this)">Innovators or Early adopters in Scotland</button>
+          <button type="button" class="ai-sugg" onclick="setAiQuery(this)">Distributors using Microsoft 365 with good credit</button>
+          <button type="button" class="ai-sugg" onclick="setAiQuery(this)">Managed service providers in London</button>
+          <button type="button" class="ai-sugg" onclick="setAiQuery(this)">Vendors with Avaya or Cisco partnership</button>
         </div>
-        <div class="ai-status" id="aiStatus" style="display:none"></div>
+        <div class="ai-status" id="aiStatus" style="display:none" aria-live="polite" role="status"></div>
         <div class="ai-active-query" id="aiActiveQuery" style="display:none">
           <span class="ai-active-label">✦ AI Filter:</span>
           <span class="ai-active-text" id="aiActiveText"></span>
@@ -1080,15 +1110,15 @@
           <thead>
             <tr>
               <th class="checkbox-col"><input type="checkbox" id="selectAllBox" onchange="toggleAll(this)"></th>
-              <th onclick="sortBy('name')">Company</th>
-              <th onclick="sortBy('industry')">Industry</th>
-              <th onclick="sortBy('channel_role')">Role</th>
-              <th onclick="sortBy('channel_segment')">Segment</th>
-              <th onclick="sortBy('employees')">Size</th>
-              <th onclick="sortBy('credit_description')">Credit</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'name')" onclick="sortBy('name')">Company</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'industry')" onclick="sortBy('industry')">Industry</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'channel_role')" onclick="sortBy('channel_role')">Role</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'channel_segment')" onclick="sortBy('channel_segment')">Segment</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'employees')" onclick="sortBy('employees')">Size</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'credit_description')" onclick="sortBy('credit_description')">Credit</th>
               <th>Tech Stack</th>
-              <th onclick="sortBy('city')">City</th>
-              <th onclick="sortBy('country')">Country</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'city')" onclick="sortBy('city')">City</th>
+              <th role="button" tabindex="0" onkeydown="sortableHeaderKeydown(event, 'country')" onclick="sortBy('country')">Country</th>
               <th>Contact</th>
               <th>Lists</th>
             </tr>
@@ -1110,6 +1140,7 @@
           <div style="font-family:'DM Mono',monospace; font-size:12px; color:var(--text3);" id="listsSubtitle"></div>
         </div>
         <div class="new-list-form">
+          <label class="filter-label" for="newListName">New list name</label>
           <input class="new-list-input" type="text" placeholder="New list name..." id="newListName">
           <button class="btn primary" onclick="createList()">+ Create</button>
         </div>
@@ -1142,7 +1173,7 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" aria-live="polite" role="status"></div>
 
 <script>
 // ============================================================
@@ -1314,7 +1345,7 @@ function uniq(arr) { return [...new Set(arr.filter(Boolean))]; }
 function buildChips(containerId, values, filterKey, extraClass='') {
   const el = document.getElementById(containerId);
   el.innerHTML = values.map(v => 
-    `<div class="chip ${extraClass}" data-key="${filterKey}" data-val="${v}" onclick="toggleChip(this)">${v}</div>`
+    `<button type="button" class="chip ${extraClass}" data-key="${filterKey}" data-val="${v}" onclick="toggleChip(this)">${v}</button>`
   ).join('');
 }
 
@@ -1455,6 +1486,13 @@ function applyFilters() {
 function sortBy(field) {
   document.getElementById('sortSelect').value = field;
   applyFilters();
+}
+
+function sortableHeaderKeydown(event, field) {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    sortBy(field);
+  }
 }
 
 // ============================================================
