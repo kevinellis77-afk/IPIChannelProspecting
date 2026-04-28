@@ -1504,6 +1504,7 @@ let companyScoreMap = new Map();
 let activeOverlayCount = 0;
 
 const OVERRIDES_STORAGE_KEY = 'ukchannel_overrides';
+const OVERRIDE_AUDIT_FIELDS = ['updated_at', 'updated_by', 'change_reason', 'source_note'];
 let companyOverrides = loadCompanyOverridesFromStorage();
 
 function isPlainObject(value) {
@@ -1525,7 +1526,12 @@ function loadCompanyOverridesFromStorage() {
       const numericId = Number(id);
       if (!Number.isInteger(numericId) || numericId <= 0) return;
       const cleanFields = Object.fromEntries(
-        Object.entries(fields).filter(([field]) => typeof field === 'string' && field.trim())
+        Object.entries(fields).filter(([field, value]) => {
+          if (typeof field !== 'string' || !field.trim()) return false;
+          if (!OVERRIDE_AUDIT_FIELDS.includes(field)) return true;
+          if (value === null || value === undefined) return false;
+          return String(value).trim().length > 0;
+        })
       );
       if (Object.keys(cleanFields).length > 0) cleaned[String(numericId)] = cleanFields;
     });
@@ -1555,7 +1561,10 @@ function getBaseRecordById(recordId) {
 
 function buildEffectiveRecord(baseRecord) {
   const override = companyOverrides[String(baseRecord.id)] || {};
-  return { ...baseRecord, ...override };
+  const appliedOverride = Object.fromEntries(
+    Object.entries(override).filter(([key]) => !OVERRIDE_AUDIT_FIELDS.includes(key))
+  );
+  return { ...baseRecord, ...appliedOverride };
 }
 
 function rebuildEffectiveDataAndScores() {
@@ -1570,7 +1579,7 @@ function rebuildEffectiveDataAndScores() {
   );
 }
 
-function saveRecordOverride(recordId, editedFields) {
+function saveRecordOverride(recordId, editedFields, auditMeta = {}) {
   const baseRecord = getBaseRecordById(recordId);
   if (!baseRecord || !isPlainObject(editedFields)) return;
 
@@ -1578,10 +1587,24 @@ function saveRecordOverride(recordId, editedFields) {
   const nextOverride = { ...existing };
 
   Object.entries(editedFields).forEach(([field, value]) => {
+    if (OVERRIDE_AUDIT_FIELDS.includes(field)) return;
     const baseValue = baseRecord[field];
     if (valuesEqual(baseValue, value)) delete nextOverride[field];
     else nextOverride[field] = value;
   });
+
+  const hasEditedFieldChanges = Object.keys(nextOverride).some(key => !OVERRIDE_AUDIT_FIELDS.includes(key));
+
+  if (hasEditedFieldChanges) {
+    nextOverride.updated_at = new Date().toISOString();
+    nextOverride.updated_by = String(auditMeta.updated_by || 'Manual edit').trim();
+    nextOverride.change_reason = String(auditMeta.change_reason || 'Record update').trim();
+    const sourceNote = String(auditMeta.source_note || '').trim();
+    if (sourceNote) nextOverride.source_note = sourceNote;
+    else delete nextOverride.source_note;
+  } else {
+    OVERRIDE_AUDIT_FIELDS.forEach(field => delete nextOverride[field]);
+  }
 
   if (Object.keys(nextOverride).length > 0) companyOverrides[String(recordId)] = nextOverride;
   else delete companyOverrides[String(recordId)];
@@ -1591,6 +1614,23 @@ function saveRecordOverride(recordId, editedFields) {
 
 function getEffectiveRecordById(recordId) {
   return allData.find(r => r.id === recordId) || null;
+}
+
+function getOverrideAudit(recordId) {
+  const override = companyOverrides[String(recordId)] || {};
+  return {
+    updated_at: override.updated_at || '',
+    updated_by: override.updated_by || '',
+    change_reason: override.change_reason || '',
+    source_note: override.source_note || ''
+  };
+}
+
+function formatAuditTimestamp(isoValue) {
+  if (!isoValue) return '—';
+  const date = new Date(isoValue);
+  if (Number.isNaN(date.getTime())) return isoValue;
+  return date.toLocaleString();
 }
 
 function lockBodyScroll() {
@@ -2747,7 +2787,10 @@ function saveRecordEdits(recordId, event) {
     return;
   }
 
-  saveRecordOverride(recordId, normalized);
+  saveRecordOverride(recordId, normalized, {
+    updated_by: 'Inline edit',
+    change_reason: 'Manual inline update'
+  });
   handleRecordSaveRefresh(recordId, { toastMessage: 'Saved ✓ Changes are now reflected in table, details, filters, and exports.' });
 }
 
@@ -2985,6 +3028,14 @@ function renderDetailBody(r) {
   }
   colA.appendChild(linksSection);
 
+  const audit = getOverrideAudit(r.id);
+  const freshnessSection = mkSection('Data Freshness & Provenance');
+  addRow(freshnessSection, 'Last Updated', formatAuditTimestamp(audit.updated_at));
+  addRow(freshnessSection, 'Updated By', audit.updated_by || '—');
+  addRow(freshnessSection, 'Change Reason', audit.change_reason || '—');
+  addRow(freshnessSection, 'Source Note', audit.source_note || '—');
+  colA.appendChild(freshnessSection);
+
   const peopleSection = mkSection('People');
   let peopleCount = 0;
   [1,2,3].forEach(n => {
@@ -3142,6 +3193,14 @@ const EDIT_COMPANY_FIELDS = [
       { key: 'partners', label: 'Partners (comma separated)', isArray: true, full: true },
       { key: 'tech_stack', label: 'Technology Stack (comma separated)', isArray: true, full: true }
     ]
+  },
+  {
+    title: 'Audit Trail',
+    fields: [
+      { key: 'updated_by', label: 'Updated By' },
+      { key: 'change_reason', label: 'Change Reason' },
+      { key: 'source_note', label: 'Source Note (optional)', full: true }
+    ]
   }
 ];
 
@@ -3177,6 +3236,9 @@ function renderEditCompanyForm(company) {
       input.name = field.key;
       if (field.isArray) {
         input.value = Array.isArray(company[field.key]) ? company[field.key].join(', ') : '';
+      } else if (field.key === 'updated_by' || field.key === 'change_reason' || field.key === 'source_note') {
+        const audit = getOverrideAudit(company.id);
+        input.value = audit[field.key] || '';
       } else if (field.type === 'number') {
         input.value = toEditableNumber(company[field.key]);
       } else if (field.key === 'company_email') {
@@ -3231,8 +3293,24 @@ function saveEditedCompany(event) {
 
   const formData = new FormData(form);
   const editedFields = {};
+  const auditMeta = {
+    updated_by: String(formData.get('updated_by') || '').trim(),
+    change_reason: String(formData.get('change_reason') || '').trim(),
+    source_note: String(formData.get('source_note') || '').trim()
+  };
+
+  if (!auditMeta.updated_by) {
+    toast('Updated By is required');
+    return;
+  }
+  if (!auditMeta.change_reason) {
+    toast('Change Reason is required');
+    return;
+  }
+
   EDIT_COMPANY_FIELDS.forEach(group => {
     group.fields.forEach(field => {
+      if (OVERRIDE_AUDIT_FIELDS.includes(field.key)) return;
       const raw = String(formData.get(field.key) || '').trim();
       if (field.isArray) {
         editedFields[field.key] = raw ? raw.split(',').map(item => item.trim()).filter(Boolean) : [];
@@ -3248,7 +3326,7 @@ function saveEditedCompany(event) {
   });
 
   editedFields.email = editedFields.company_email;
-  saveRecordOverride(companyId, editedFields);
+  saveRecordOverride(companyId, editedFields, auditMeta);
   closeEditCompanyModalDirect();
   handleRecordSaveRefresh(companyId, { toastMessage: 'Saved ✓ Company updated successfully.' });
 }
