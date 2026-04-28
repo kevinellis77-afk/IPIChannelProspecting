@@ -56,6 +56,8 @@
     display: flex;
     gap: 24px;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
   .stat-pill {
     display: flex;
@@ -934,9 +936,178 @@
     border-radius: 16px 16px 0 0;
   }
 
-  @media (max-width: 900px) {
-    .sidebar { width: 240px; min-width: 240px; }
-    .detail-sidebar { width: 100vw; }
+  .mobile-filter-toggle {
+    display: none;
+  }
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 56px 0 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 180;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .sidebar-backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  @media (max-width: 1024px) {
+    .topbar {
+      height: auto;
+      min-height: 56px;
+      padding: 10px 16px;
+      gap: 10px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+    .stats-bar {
+      gap: 12px;
+      width: 100%;
+      justify-content: flex-start;
+    }
+    .tab-bar {
+      margin-left: auto;
+    }
+    .sidebar {
+      width: 240px;
+      min-width: 240px;
+    }
+    .detail-sidebar {
+      width: 100vw;
+      max-width: 100vw;
+    }
+    .table-wrap td:nth-child(8),
+    .table-wrap th:nth-child(8),
+    .table-wrap td:nth-child(11),
+    .table-wrap th:nth-child(11) {
+      display: none;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .app-layout {
+      position: relative;
+      height: calc(100vh - 56px);
+    }
+    .sidebar {
+      position: fixed;
+      left: 0;
+      top: 56px;
+      bottom: 0;
+      z-index: 220;
+      width: min(320px, 85vw);
+      min-width: min(320px, 85vw);
+      transform: translateX(-105%);
+      transition: transform 0.22s ease;
+      box-shadow: 8px 0 32px rgba(0,0,0,0.45);
+    }
+    .sidebar.open {
+      transform: translateX(0);
+    }
+    .mobile-filter-toggle {
+      display: inline-flex;
+    }
+    .toolbar {
+      padding: 10px 12px;
+      gap: 8px;
+    }
+    .select-sort {
+      margin-left: 0;
+    }
+    .table-wrap td:nth-child(4),
+    .table-wrap th:nth-child(4),
+    .table-wrap td:nth-child(5),
+    .table-wrap th:nth-child(5),
+    .table-wrap td:nth-child(10),
+    .table-wrap th:nth-child(10),
+    .table-wrap td:nth-child(12),
+    .table-wrap th:nth-child(12) {
+      display: none;
+    }
+    .detail-sidebar,
+    .list-modal {
+      top: 56px;
+      height: calc(100vh - 56px);
+      max-height: calc(100vh - 56px);
+      border-radius: 0;
+    }
+    .overlay {
+      align-items: flex-start;
+      justify-content: stretch;
+      padding-top: 56px;
+    }
+    .list-modal {
+      width: 100vw;
+      max-width: 100vw;
+    }
+    .list-modal .sidebar-header {
+      border-radius: 0;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .logo span {
+      display: none;
+    }
+    .stats-bar {
+      gap: 8px;
+    }
+    .stat-pill {
+      font-size: 11px;
+    }
+    .table-wrap table,
+    .table-wrap tbody,
+    .table-wrap tr,
+    .table-wrap td {
+      display: block;
+      width: 100%;
+    }
+    .table-wrap thead {
+      display: none;
+    }
+    .table-wrap tr {
+      border-bottom: 1px solid var(--border2);
+      padding: 10px 0;
+    }
+    .table-wrap td {
+      border-bottom: none;
+      max-width: 100%;
+      white-space: normal;
+      text-overflow: initial;
+      overflow: visible;
+      padding: 6px 14px;
+      display: flex;
+      gap: 10px;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .table-wrap td::before {
+      content: attr(data-label);
+      color: var(--text3);
+      font-size: 10px;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      font-family: 'Syne', sans-serif;
+      flex-shrink: 0;
+    }
+    .table-wrap td.checkbox-col::before {
+      content: 'Select';
+    }
+    .table-wrap td:nth-child(1),
+    .table-wrap td:nth-child(2),
+    .table-wrap td:nth-child(3),
+    .table-wrap td:nth-child(6),
+    .table-wrap td:nth-child(7),
+    .table-wrap td:nth-child(9),
+    .table-wrap td:nth-child(11),
+    .table-wrap td:nth-child(12) {
+      display: flex;
+    }
   }
 
   button:focus-visible,
@@ -987,8 +1158,9 @@
   </div>
 
   <div class="app-layout">
+    <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebarDrawer()"></div>
     <!-- SIDEBAR FILTERS -->
-    <div class="sidebar">
+    <div class="sidebar" id="filterSidebar">
       <div class="filter-header">
         <h3>Filters</h3>
         <button class="clear-btn" onclick="clearFilters()">Clear all</button>
@@ -1096,6 +1268,7 @@
       </div>
 
       <div class="toolbar">
+        <button class="btn mobile-filter-toggle" id="filterToggleBtn" onclick="toggleSidebarDrawer()">☰ Filters</button>
         <span class="result-count"><strong id="tbFilteredCount">0</strong> companies</span>
         <button class="btn" onclick="selectAll()">☑ Select All</button>
         <button class="btn" onclick="deselectAll()">□ Deselect</button>
@@ -1163,7 +1336,7 @@
       <div class="modal-title" id="modalTitle"></div>
       <div class="modal-subtitle" id="modalSubtitle"></div>
     </div>
-    <button class="close-btn" onclick="closeModalDirect()">×</button>
+    <button class="close-btn" aria-label="Close details panel" onclick="closeModalDirect()">×</button>
   </div>
   <div class="sidebar-body" id="modalBody"></div>
 </div>
@@ -1173,7 +1346,7 @@
   <div class="list-modal">
     <div class="sidebar-header">
       <div><div class="modal-title">Add to Prospect List</div></div>
-      <button class="close-btn" onclick="closeListModalDirect()">×</button>
+      <button class="close-btn" aria-label="Close add to list dialog" onclick="closeListModalDirect()">×</button>
     </div>
     <div style="padding: 16px 24px;" id="listModalBody"></div>
   </div>
@@ -1190,6 +1363,44 @@ let filteredData = [];
 let selectedIds = new Set();
 let sortField = 'name';
 let sortAsc = true;
+let activeOverlayCount = 0;
+
+function lockBodyScroll() {
+  activeOverlayCount += 1;
+  if (activeOverlayCount === 1) document.body.style.overflow = 'hidden';
+}
+
+function unlockBodyScroll() {
+  activeOverlayCount = Math.max(0, activeOverlayCount - 1);
+  if (activeOverlayCount === 0) document.body.style.overflow = '';
+}
+
+function isMobileDrawerViewport() {
+  return window.innerWidth <= 768;
+}
+
+function openSidebarDrawer() {
+  if (!isMobileDrawerViewport()) return;
+  document.getElementById('filterSidebar').classList.add('open');
+  document.getElementById('sidebarBackdrop').classList.add('open');
+  lockBodyScroll();
+}
+
+function closeSidebarDrawer() {
+  if (!isMobileDrawerViewport()) return;
+  const sidebar = document.getElementById('filterSidebar');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  if (!sidebar.classList.contains('open')) return;
+  sidebar.classList.remove('open');
+  backdrop.classList.remove('open');
+  unlockBodyScroll();
+}
+
+function toggleSidebarDrawer() {
+  const sidebar = document.getElementById('filterSidebar');
+  if (sidebar.classList.contains('open')) closeSidebarDrawer();
+  else openSidebarDrawer();
+}
 function isValidStoredProspectList(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
   if (typeof entry.id !== 'number' || !Number.isFinite(entry.id) || entry.id <= 0) return false;
@@ -1430,6 +1641,7 @@ function toggleChip(el) {
   }
   updateChipCounts();
   applyFilters();
+  if (isMobileDrawerViewport()) closeSidebarDrawer();
 }
 
 function updateChipCounts() {
@@ -1456,6 +1668,7 @@ function clearFilters() {
   document.getElementById('chip-listed-any').classList.add('active');
   updateChipCounts();
   applyFilters();
+  closeSidebarDrawer();
 }
 
 // ============================================================
@@ -1587,6 +1800,7 @@ function renderTable() {
 
     const tdCb = document.createElement('td');
     tdCb.className = 'checkbox-col';
+    tdCb.setAttribute('data-label', 'Select');
     tdCb.addEventListener('click', e => e.stopPropagation());
     const input = document.createElement('input');
     input.type = 'checkbox';
@@ -1597,16 +1811,19 @@ function renderTable() {
 
     const tdName = document.createElement('td');
     tdName.className = 'td-name';
+    tdName.setAttribute('data-label', 'Company');
     tdName.title = r.name || '';
     tdName.textContent = r.name || '—';
     tr.appendChild(tdName);
 
     const tdIndustry = document.createElement('td');
+    tdIndustry.setAttribute('data-label', 'Industry');
     tdIndustry.title = r.industry || '';
     tdIndustry.textContent = r.industry ? r.industry.split('|')[0].trim() : '—';
     tr.appendChild(tdIndustry);
 
     const tdRole = document.createElement('td');
+    tdRole.setAttribute('data-label', 'Role');
     const roleBadge = document.createElement('span');
     roleBadge.className = `badge ${roleClass}`;
     roleBadge.textContent = r.channel_role || '—';
@@ -1614,11 +1831,13 @@ function renderTable() {
     tr.appendChild(tdRole);
 
     const tdSeg = document.createElement('td');
+    tdSeg.setAttribute('data-label', 'Segment');
     tdSeg.title = r.channel_segment || '';
     tdSeg.textContent = r.channel_segment ? r.channel_segment.replace('|', ' ') : '—';
     tr.appendChild(tdSeg);
 
     const tdEmp = document.createElement('td');
+    tdEmp.setAttribute('data-label', 'Size');
     const empBadge = document.createElement('span');
     empBadge.className = 'badge badge-grey';
     empBadge.textContent = r.employees || '—';
@@ -1626,6 +1845,7 @@ function renderTable() {
     tr.appendChild(tdEmp);
 
     const tdCredit = document.createElement('td');
+    tdCredit.setAttribute('data-label', 'Credit');
     const creditBadge = document.createElement('span');
     creditBadge.className = `badge ${creditClass}`;
     creditBadge.textContent = r.credit_description ? r.credit_description.split(' ')[0] : '—';
@@ -1633,6 +1853,7 @@ function renderTable() {
     tr.appendChild(tdCredit);
 
     const tdTech = document.createElement('td');
+    tdTech.setAttribute('data-label', 'Tech Stack');
     const techList = Array.isArray(r.tech_stack) ? r.tech_stack.slice(0, 3) : [];
     if (techList.length) {
       techList.forEach(t => {
@@ -1650,14 +1871,17 @@ function renderTable() {
     tr.appendChild(tdTech);
 
     const tdCity = document.createElement('td');
+    tdCity.setAttribute('data-label', 'City');
     tdCity.textContent = r.city || '—';
     tr.appendChild(tdCity);
 
     const tdCountry = document.createElement('td');
+    tdCountry.setAttribute('data-label', 'Country');
     tdCountry.textContent = r.country ? r.country.charAt(0) + r.country.slice(1).toLowerCase() : '—';
     tr.appendChild(tdCountry);
 
     const tdDir = document.createElement('td');
+    tdDir.setAttribute('data-label', 'Contact');
     if (dir1) {
       const dirSpan = document.createElement('span');
       dirSpan.style.fontSize = '11px';
@@ -1672,6 +1896,7 @@ function renderTable() {
     tr.appendChild(tdDir);
 
     const tdList = document.createElement('td');
+    tdList.setAttribute('data-label', 'Lists');
     tdList.addEventListener('click', e => e.stopPropagation());
     if (inList) {
       const dot = document.createElement('span');
@@ -1802,6 +2027,7 @@ function showDetail(r) {
 
   renderDetailBody(r);
   document.getElementById('detailSidebar').classList.add('open');
+  lockBodyScroll();
 }
 
 function renderDetailBody(r) {
@@ -2015,7 +2241,10 @@ function closeModal(event) {
   // kept for compatibility
 }
 function closeModalDirect() {
-  document.getElementById('detailSidebar').classList.remove('open');
+  const panel = document.getElementById('detailSidebar');
+  if (!panel.classList.contains('open')) return;
+  panel.classList.remove('open');
+  unlockBodyScroll();
 }
 
 // ============================================================
@@ -2032,6 +2261,7 @@ function toggleListedFilter(el) {
   document.querySelectorAll('[data-listed]').forEach(c => c.classList.remove('active'));
   el.classList.add('active');
   applyFilters();
+  if (isMobileDrawerViewport()) closeSidebarDrawer();
 }
 
 // Add to list from the sidebar detail panel dropdown
@@ -2122,6 +2352,7 @@ function showAddToList() {
     });
   }
   document.getElementById('listOverlay').classList.add('open');
+  lockBodyScroll();
 }
 
 function addToList(listId) {
@@ -2247,7 +2478,10 @@ function closeListModal(event) {
   if (event.target === document.getElementById('listOverlay')) closeListModalDirect();
 }
 function closeListModalDirect() {
-  document.getElementById('listOverlay').classList.remove('open');
+  const overlay = document.getElementById('listOverlay');
+  if (!overlay.classList.contains('open')) return;
+  overlay.classList.remove('open');
+  unlockBodyScroll();
 }
 
 // ============================================================
@@ -2672,8 +2906,21 @@ function clearAiSearch() {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
+    closeSidebarDrawer();
     closeModalDirect();
     closeListModalDirect();
+  }
+});
+
+window.addEventListener('resize', () => {
+  if (!isMobileDrawerViewport()) {
+    const sidebar = document.getElementById('filterSidebar');
+    const backdrop = document.getElementById('sidebarBackdrop');
+    if (sidebar.classList.contains('open')) {
+      sidebar.classList.remove('open');
+      backdrop.classList.remove('open');
+      unlockBodyScroll();
+    }
   }
 });
 
