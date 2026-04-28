@@ -954,6 +954,61 @@
     background: var(--surface);
     border-radius: 16px 16px 0 0;
   }
+  .edit-company-form {
+    padding: 16px 24px 20px;
+    display: grid;
+    gap: 14px;
+  }
+  .edit-form-group {
+    display: grid;
+    gap: 8px;
+  }
+  .edit-form-group h5 {
+    margin: 0;
+    font-size: 11px;
+    font-family: 'DM Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent2);
+  }
+  .edit-form-grid {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .edit-form-field {
+    display: grid;
+    gap: 4px;
+  }
+  .edit-form-field.full {
+    grid-column: 1 / -1;
+  }
+  .edit-form-field label {
+    font-size: 11px;
+    color: var(--text3);
+    font-family: 'DM Mono', monospace;
+  }
+  .edit-input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    color: var(--text2);
+    padding: 8px 10px;
+    font-size: 12px;
+    font-family: 'DM Mono', monospace;
+    outline: none;
+  }
+  .edit-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(0,229,160,0.2);
+  }
+  .edit-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+  }
 
   .mobile-filter-toggle {
     display: none;
@@ -1060,6 +1115,9 @@
     .list-modal {
       width: 100vw;
       max-width: 100vw;
+    }
+    .edit-form-grid {
+      grid-template-columns: 1fr;
     }
     .list-modal .sidebar-header {
       border-radius: 0;
@@ -1403,6 +1461,20 @@
       <button class="close-btn" aria-label="Close add to list dialog" onclick="closeListModalDirect()">×</button>
     </div>
     <div style="padding: 16px 24px;" id="listModalBody"></div>
+  </div>
+</div>
+
+<!-- EDIT COMPANY MODAL -->
+<div class="overlay" id="editCompanyOverlay" onclick="closeEditCompanyModal(event)">
+  <div class="list-modal">
+    <div class="sidebar-header">
+      <div>
+        <div class="modal-title">Edit Company</div>
+        <div class="modal-subtitle" id="editCompanySubtitle"></div>
+      </div>
+      <button class="close-btn" aria-label="Close edit company dialog" onclick="closeEditCompanyModalDirect()">×</button>
+    </div>
+    <form class="edit-company-form" id="editCompanyForm"></form>
   </div>
 </div>
 
@@ -2419,6 +2491,18 @@ function renderDetailBody(r) {
   const colA = document.createElement('div');
   const colB = document.createElement('div');
 
+  const actionsRow = document.createElement('div');
+  actionsRow.style.display = 'flex';
+  actionsRow.style.justifyContent = 'flex-end';
+  actionsRow.style.marginBottom = '10px';
+  const editBtn = document.createElement('button');
+  editBtn.className = 'btn primary';
+  editBtn.style.fontSize = '11px';
+  editBtn.textContent = 'Edit Company';
+  editBtn.addEventListener('click', () => openEditCompanyModal(r.id));
+  actionsRow.appendChild(editBtn);
+  colA.appendChild(actionsRow);
+
   const mkSection = (title) => {
     const s = document.createElement('div');
     s.className = 'detail-section';
@@ -2691,6 +2775,155 @@ function renderDetailBody(r) {
   modalBody.appendChild(grid);
 }
 
+const EDIT_COMPANY_FIELDS = [
+  {
+    title: 'Company Profile',
+    fields: [
+      { key: 'name', label: 'Name' },
+      { key: 'website', label: 'Website' },
+      { key: 'phone', label: 'Phone' },
+      { key: 'company_email', label: 'Email' },
+      { key: 'city', label: 'City' },
+      { key: 'country', label: 'Country' }
+    ]
+  },
+  {
+    title: 'Commercial Signals',
+    fields: [
+      { key: 'channel_role', label: 'Channel Role' },
+      { key: 'channel_segment', label: 'Segment' },
+      { key: 'adopter_profile', label: 'Adopter Profile' },
+      { key: 'var_type', label: 'VAR Type' }
+    ]
+  },
+  {
+    title: 'Financials',
+    fields: [
+      { key: 'revenue', label: 'Revenue', type: 'number' },
+      { key: 'credit_description', label: 'Credit Rating' },
+      { key: 'credit_score', label: 'Credit Score', type: 'number' }
+    ]
+  },
+  {
+    title: 'Partner & Technology',
+    fields: [
+      { key: 'partners', label: 'Partners (comma separated)', isArray: true, full: true },
+      { key: 'tech_stack', label: 'Technology Stack (comma separated)', isArray: true, full: true }
+    ]
+  }
+];
+
+function toEditableNumber(value) {
+  if (value === null || value === undefined || value === '') return '';
+  const n = Number(value);
+  return Number.isFinite(n) ? String(n) : '';
+}
+
+function renderEditCompanyForm(company) {
+  const form = document.getElementById('editCompanyForm');
+  if (!form) return;
+  form.innerHTML = '';
+  EDIT_COMPANY_FIELDS.forEach(group => {
+    const wrap = document.createElement('div');
+    wrap.className = 'edit-form-group';
+    const title = document.createElement('h5');
+    title.textContent = group.title;
+    wrap.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'edit-form-grid';
+    group.fields.forEach(field => {
+      const fieldWrap = document.createElement('div');
+      fieldWrap.className = `edit-form-field${field.full ? ' full' : ''}`;
+      const label = document.createElement('label');
+      label.setAttribute('for', `edit-${field.key}`);
+      label.textContent = field.label;
+      const input = document.createElement('input');
+      input.className = 'edit-input';
+      input.type = field.type === 'number' ? 'number' : 'text';
+      input.id = `edit-${field.key}`;
+      input.name = field.key;
+      if (field.isArray) {
+        input.value = Array.isArray(company[field.key]) ? company[field.key].join(', ') : '';
+      } else if (field.type === 'number') {
+        input.value = toEditableNumber(company[field.key]);
+      } else if (field.key === 'company_email') {
+        input.value = company.company_email || company.email || '';
+      } else {
+        input.value = company[field.key] || '';
+      }
+      fieldWrap.appendChild(label);
+      fieldWrap.appendChild(input);
+      grid.appendChild(fieldWrap);
+    });
+    wrap.appendChild(grid);
+    form.appendChild(wrap);
+  });
+
+  const actions = document.createElement('div');
+  actions.className = 'edit-modal-actions';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'btn';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', closeEditCompanyModalDirect);
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'submit';
+  saveBtn.className = 'btn primary';
+  saveBtn.textContent = 'Save';
+  actions.appendChild(cancelBtn);
+  actions.appendChild(saveBtn);
+  form.appendChild(actions);
+}
+
+function openEditCompanyModal(companyId) {
+  const company = allData.find(d => d.id === companyId);
+  if (!company) return;
+  const subtitle = document.getElementById('editCompanySubtitle');
+  if (subtitle) subtitle.textContent = company.name || `Company ${company.id}`;
+  const form = document.getElementById('editCompanyForm');
+  if (!form) return;
+  form.dataset.companyId = String(companyId);
+  renderEditCompanyForm(company);
+  form.onsubmit = saveEditedCompany;
+  document.getElementById('editCompanyOverlay').classList.add('open');
+  lockBodyScroll();
+}
+
+function saveEditedCompany(event) {
+  event.preventDefault();
+  const form = event.target;
+  const companyId = Number(form.dataset.companyId);
+  const company = allData.find(d => d.id === companyId);
+  if (!company) return;
+
+  const formData = new FormData(form);
+  EDIT_COMPANY_FIELDS.forEach(group => {
+    group.fields.forEach(field => {
+      const raw = String(formData.get(field.key) || '').trim();
+      if (field.isArray) {
+        company[field.key] = raw ? raw.split(',').map(item => item.trim()).filter(Boolean) : [];
+        return;
+      }
+      if (field.type === 'number') {
+        const parsed = raw === '' ? 0 : Number(raw);
+        company[field.key] = Number.isFinite(parsed) ? parsed : 0;
+        return;
+      }
+      company[field.key] = raw;
+    });
+  });
+
+  company.email = company.company_email;
+  companyScoreMap.set(company.id, computeProspectScore(company));
+  document.getElementById('modalTitle').textContent = company.name;
+  document.getElementById('modalSubtitle').textContent = `${company.industry || ''} ${company.city ? '· ' + company.city : ''} ${company.country ? '· ' + company.country : ''}`;
+  closeEditCompanyModalDirect();
+  applyFilters();
+  renderDetailBody(company);
+  toast('Company updated');
+}
+
 function closeModal(event) {
   // kept for compatibility
 }
@@ -2933,6 +3166,16 @@ function closeListModal(event) {
 }
 function closeListModalDirect() {
   const overlay = document.getElementById('listOverlay');
+  if (!overlay.classList.contains('open')) return;
+  overlay.classList.remove('open');
+  unlockBodyScroll();
+}
+
+function closeEditCompanyModal(event) {
+  if (event.target === document.getElementById('editCompanyOverlay')) closeEditCompanyModalDirect();
+}
+function closeEditCompanyModalDirect() {
+  const overlay = document.getElementById('editCompanyOverlay');
   if (!overlay.classList.contains('open')) return;
   overlay.classList.remove('open');
   unlockBodyScroll();
