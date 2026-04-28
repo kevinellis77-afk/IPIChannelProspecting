@@ -234,6 +234,11 @@
     margin-right: 4px;
   }
   .result-count strong { color: var(--accent); font-size: 14px; }
+  .selection-scope-note {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text3);
+  }
   
   .btn {
     display: flex;
@@ -1094,6 +1099,7 @@
         <span class="result-count"><strong id="tbFilteredCount">0</strong> companies</span>
         <button class="btn" onclick="selectAll()">☑ Select All</button>
         <button class="btn" onclick="deselectAll()">□ Deselect</button>
+        <span class="selection-scope-note" id="selectionScopeNote"></span>
         <button class="btn selected-count" id="addToListBtn" onclick="showAddToList()" style="display:none"></button>
         <select class="select-sort" id="sortSelect" onchange="applyFilters()">
           <option value="name">Sort: Name A–Z</option>
@@ -1546,6 +1552,7 @@ function renderTable() {
   if (filteredData.length === 0) {
     tbody.innerHTML = '';
     document.getElementById('emptyState').style.display = 'block';
+    updateViewportSelectionState();
     return;
   }
   document.getElementById('emptyState').style.display = 'none';
@@ -1678,6 +1685,7 @@ function renderTable() {
     </td>`;
     tbody.appendChild(tr);
   }
+  updateViewportSelectionState();
 }
 
 function loadMore() {
@@ -1693,6 +1701,7 @@ function toggleSelect(id, checkbox) {
   else selectedIds.delete(id);
   const row = document.querySelector(`tr[data-id="${id}"]`);
   if (row) row.classList.toggle('selected', checkbox.checked);
+  updateViewportSelectionState();
   updateSelectedCount();
 }
 
@@ -1715,6 +1724,32 @@ function deselectAll() {
   selectedIds.clear();
   renderTable();
   updateSelectedCount();
+}
+
+function updateViewportSelectionState() {
+  const visibleRows = filteredData.slice(0, pageShown);
+  const visibleCount = visibleRows.length;
+  const selectedVisibleCount = visibleRows.reduce((count, row) => (
+    count + (selectedIds.has(row.id) ? 1 : 0)
+  ), 0);
+
+  const selectAllBox = document.getElementById('selectAllBox');
+  if (selectAllBox) {
+    selectAllBox.checked = visibleCount > 0 && selectedVisibleCount === visibleCount;
+    selectAllBox.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleCount;
+  }
+
+  const scopeNote = document.getElementById('selectionScopeNote');
+  if (!scopeNote) return;
+  if (filteredData.length === 0) {
+    scopeNote.textContent = 'No visible rows to select.';
+    return;
+  }
+  if (filteredData.length > pageShown) {
+    scopeNote.textContent = `${selectedVisibleCount}/${visibleCount} visible selected • Select All applies to all ${filteredData.length} filtered rows`;
+    return;
+  }
+  scopeNote.textContent = `${selectedVisibleCount}/${visibleCount} visible selected • Selection applies to all filtered rows`;
 }
 
 function updateSelectedCount() {
