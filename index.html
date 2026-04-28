@@ -1361,8 +1361,6 @@
 let allData = [];
 let filteredData = [];
 let selectedIds = new Set();
-let sortField = 'name';
-let sortAsc = true;
 let activeOverlayCount = 0;
 
 function lockBodyScroll() {
@@ -1713,7 +1711,8 @@ function applyFilters() {
     return true;
   });
 
-  // Sort
+  // Canonical sorting path: read current dropdown value, then sort once here.
+  // Header clicks only update the dropdown selection via sortBy(...).
   const sortSel = document.getElementById('sortSelect').value;
   const empMap = {};
   EMPLOYEE_ORDER.forEach((e,i) => empMap[e] = i);
@@ -1742,6 +1741,7 @@ function applyFilters() {
 }
 
 function sortBy(field) {
+  // Keep table-header sorting and dropdown sorting in one state source (sortSelect).
   document.getElementById('sortSelect').value = field;
   applyFilters();
 }
@@ -2610,56 +2610,6 @@ function toast(msg) {
 let aiFilterFn = null; // function(record) => bool
 let aiQueryText = '';
 
-const AI_SYSTEM_PROMPT = `You are a filter-query parser for a UK Channel company database.
-
-The database has these fields per company:
-- name: string
-- industry: string (e.g. "Telecommunications", "Information Technology | Services", "Computer Software")
-- channel_role: string — one of: Reseller, Distributor, Vendor, Wholesaler, Consultant
-- channel_segment: string — one of: Voice, ICT, IT Services and Support, Managed Services Provider, Telco | Network, Telco | Network | AltNet, Hardware and Software, Software Development, Digital Web Services, Data Analytics
-- employees: string — one of: "1-5", "1-10", "6-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000", "5000+"
-- tech_stack: array of strings — possible values include: CCaaS, UCaaS, Teams, Microsoft 365, Microsoft, Dynamics, Power Platform, Telephony, Telecommunications, PSTN, On-premise Phone Systems, Cloud Services, Cloud, Managed IT, IT Services, IT Support, Connectivity, TelXL
-- partners: array of strings — vendor/partner names e.g. MICROSOFT, CISCO, AVAYA, GAMMA, VODAFONE, 3CX, BT, MITEL, DELL, HP, O2, EE, VMWARE, SOPHOS, FORTINET
-- adopter_profile: string — one of: Innovator, Early adopter, Early majority, Late majority, Sceptic
-- credit_description: string — one of: Very Good Creditworthiness, Good Creditworthiness, Creditworthy, Caution - Credit at your discretion, Not Scored
-- country: string — one of: ENGLAND, SCOTLAND, WALES, NORTHERN IRELAND (stored in uppercase)
-- city: string
-- county: string
-- var_type: string — one of: VAR, White Label
-- revenue: number (in GBP, can be null)
-- year_founded: number (can be null)
-
-Employee size interpretation:
-- "more than 10" or "10+" → include: 11-50, 51-200, 201-500, 501-1000, 1001-5000, 5000+
-- "more than 50" → include: 51-200, 201-500, 501-1000, 1001-5000, 5000+
-- "more than 200" → include: 201-500, 501-1000, 1001-5000, 5000+
-- "small" → include: 1-5, 1-10, 6-10, 11-50
-- "medium" → include: 51-200, 201-500
-- "large" → include: 501-1000, 1001-5000, 5000+
-- "fewer than 50" or "under 50" → include: 1-5, 1-10, 6-10, 11-50
-
-The user will type a plain English query. Convert it to a JavaScript arrow function body (just the body, not the full function) that filters a record object 'r'.
-
-Rules:
-- Return ONLY a valid JS expression that evaluates to true/false — no prose, no markdown, no backticks
-- Use .includes() for array fields, case-insensitive where needed
-- For tech_stack use: r.tech_stack.some(t => t.toLowerCase().includes('ccaas'))
-- For partners use: r.partners.some(p => p.toUpperCase() === 'CISCO')
-- For country: r.country.toUpperCase().includes('SCOTLAND')
-- String comparisons should be case-insensitive where sensible
-- Support AND logic (multiple conditions) and OR logic
-- For "good credit" or "creditworthy" match Good Creditworthiness OR Very Good Creditworthiness OR Creditworthy
-
-Examples:
-Query: "Resellers with CCaaS and more than 10 employees"
-Output: r.channel_role === 'Reseller' && r.tech_stack.some(t => t.toLowerCase().includes('ccaas')) && ['11-50','51-200','201-500','501-1000','1001-5000','5000+'].includes(r.employees)
-
-Query: "Distributors or Vendors in Scotland"
-Output: (r.channel_role === 'Distributor' || r.channel_role === 'Vendor') && r.country.toUpperCase().includes('SCOTLAND')
-
-Query: "Managed service providers using Microsoft 365 with good credit"
-Output: r.channel_segment === 'Managed Services Provider' && r.tech_stack.some(t => t.toLowerCase().includes('microsoft 365')) && ['Very Good Creditworthiness','Good Creditworthiness','Creditworthy'].includes(r.credit_description)`;
-
 function aiSearchKeydown(e) {
   if (e.key === 'Enter') runAiSearch();
 }
@@ -2679,6 +2629,8 @@ function setAiQuery(el) {
 }
 
 function buildAiFilterFromQuery(query) {
+  // AI parser strategy: deterministic keyword-to-predicate mapping built locally
+  // (no model call), then compose a single ANDed filter function in applyFilters().
   const q = String(query || '').trim().toLowerCase();
   if (!q) throw new Error('Enter a search query');
 
