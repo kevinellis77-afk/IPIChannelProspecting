@@ -666,6 +666,32 @@
   }
   @keyframes load { from { width: 0%; } to { width: 100%; } }
   .loading-text { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text3); }
+  .loading-error {
+    width: min(560px, 92vw);
+    margin-top: 12px;
+    padding: 14px 16px;
+    border: 1px solid var(--danger);
+    border-radius: 10px;
+    background: rgba(255, 71, 87, 0.08);
+    color: #ffd4d9;
+    display: none;
+  }
+  .loading-error h4 {
+    font-family: 'Syne', sans-serif;
+    font-size: 16px;
+    margin-bottom: 6px;
+    color: #ffdce0;
+  }
+  .loading-error p {
+    font-size: 13px;
+    line-height: 1.4;
+    margin-bottom: 10px;
+  }
+  .loading-error code {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: #ffb3bc;
+  }
 
   /* EMPTY STATE */
   .empty { text-align: center; padding: 60px 20px; color: var(--text3); }
@@ -896,6 +922,11 @@
   <div class="loading-logo">UK CHANNEL</div>
   <div class="loading-bar-wrap"><div class="loading-bar"></div></div>
   <div class="loading-text">Loading 4,519 channel companies...</div>
+  <div id="loadingError" class="loading-error" role="alert" aria-live="assertive">
+    <h4>Data load failed</h4>
+    <p id="loadingErrorText">We could not load the company dataset. Please refresh the page or try again.</p>
+    <button class="btn danger-btn" onclick="retryLoadData()">Retry loading</button>
+  </div>
 </div>
 
 <div id="app" style="display:none;">
@@ -1178,22 +1209,98 @@ const activeFilters = {
 };
 
 async function loadData() {
-  const binary = atob(DATA_B64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const ds = new DecompressionStream('gzip');
-  const writer = ds.writable.getWriter();
-  writer.write(bytes); writer.close();
-  const output = await new Response(ds.readable).arrayBuffer();
-  allData = JSON.parse(new TextDecoder().decode(output));
-  
-  document.getElementById('loading').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
-  document.getElementById('app').style.flexDirection = 'column';
-  
-  document.getElementById('totalCount').textContent = allData.length.toLocaleString();
-  buildFilterChips();
-  applyFilters();
+  const loadingEl = document.getElementById('loading');
+  const errorEl = document.getElementById('loadingError');
+  const errorTextEl = document.getElementById('loadingErrorText');
+  errorEl.style.display = 'none';
+
+  try {
+    const hasDecompressionStream = typeof DecompressionStream !== 'undefined';
+    let parsed = null;
+
+    if (hasDecompressionStream) {
+      parsed = await decodeFromEmbeddedGzip();
+    } else {
+      parsed = await fetchPreDecompressedJSON();
+    }
+
+    allData = parsed;
+    loadingEl.style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    document.getElementById('app').style.flexDirection = 'column';
+    document.getElementById('totalCount').textContent = allData.length.toLocaleString();
+    buildFilterChips();
+    applyFilters();
+  } catch (err) {
+    loadingEl.style.display = 'flex';
+    errorEl.style.display = 'block';
+    loadingEl.style.height = 'auto';
+    loadingEl.style.minHeight = '100vh';
+    const barWrap = loadingEl.querySelector('.loading-bar-wrap');
+    const loadingText = loadingEl.querySelector('.loading-text');
+    if (barWrap) barWrap.style.display = 'none';
+    if (loadingText) loadingText.style.display = 'none';
+    errorTextEl.textContent = 'Unable to decode dataset in this browser. Retry, then hard-refresh. If it still fails, ensure data/companies.json is reachable.';
+    console.error('[loadData] failed', err);
+  }
+}
+
+async function decodeFromEmbeddedGzip() {
+  let binary;
+  let bytes;
+  let output;
+  let text;
+
+  try {
+    binary = atob(DATA_B64);
+    bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  } catch (err) {
+    console.error('[loadData][base64 decode] failed', err);
+    throw err;
+  }
+
+  try {
+    const ds = new DecompressionStream('gzip');
+    const writer = ds.writable.getWriter();
+    writer.write(bytes);
+    writer.close();
+    output = await new Response(ds.readable).arrayBuffer();
+    text = new TextDecoder().decode(output);
+  } catch (err) {
+    console.error('[loadData][gzip] failed, attempting data/companies.json fallback', err);
+    return fetchPreDecompressedJSON();
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    console.error('[loadData][JSON parse] failed', err);
+    throw err;
+  }
+}
+
+async function fetchPreDecompressedJSON() {
+  try {
+    const res = await fetch('data/companies.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error('[loadData][fallback fetch] failed', err);
+    throw err;
+  }
+}
+
+function retryLoadData() {
+  const loadingEl = document.getElementById('loading');
+  const errorEl = document.getElementById('loadingError');
+  const barWrap = loadingEl.querySelector('.loading-bar-wrap');
+  const loadingText = loadingEl.querySelector('.loading-text');
+  loadingEl.style.display = 'flex';
+  errorEl.style.display = 'none';
+  if (barWrap) barWrap.style.display = '';
+  if (loadingText) loadingText.style.display = '';
+  loadData();
 }
 
 // ============================================================
