@@ -1590,9 +1590,13 @@ let duplicateCandidateStats = {
 let activeOverlayCount = 0;
 let includeScoringAuditExport = false;
 
-const OVERRIDES_STORAGE_KEY = 'ukchannel_overrides';
+const DEDUPE_DECISIONS_STORAGE_KEY = 'ukchannel_dedupe_decisions';
+const CANONICAL_OVERRIDES_STORAGE_KEY = 'ukchannel_canonical_overrides';
+const LEGACY_OVERRIDES_STORAGE_KEY = 'ukchannel_overrides';
 const OVERRIDES_SCHEMA_VERSION = 1;
 const OVERRIDE_AUDIT_FIELDS = ['updated_at', 'updated_by', 'change_reason', 'source_note'];
+const DEDUPE_DECISION_BUCKETS = ['approved', 'rejected', 'manual'];
+let dedupeDecisions = loadDedupeDecisionsFromStorage();
 let companyOverrides = loadCompanyOverridesFromStorage();
 let pendingOverrideImportMode = 'merge';
 
@@ -1602,8 +1606,13 @@ function isPlainObject(value) {
 
 function loadCompanyOverridesFromStorage() {
   const safeDefault = {};
-  const raw = localStorage.getItem(OVERRIDES_STORAGE_KEY);
-  if (!raw) return safeDefault;
+  const canonicalRaw = localStorage.getItem(CANONICAL_OVERRIDES_STORAGE_KEY);
+  const legacyRaw = localStorage.getItem(LEGACY_OVERRIDES_STORAGE_KEY);
+  const raw = canonicalRaw || legacyRaw;
+  if (!raw) {
+    localStorage.setItem(CANONICAL_OVERRIDES_STORAGE_KEY, JSON.stringify(safeDefault));
+    return safeDefault;
+  }
 
   try {
     const parsed = JSON.parse(raw);
@@ -1625,16 +1634,82 @@ function loadCompanyOverridesFromStorage() {
       if (Object.keys(cleanFields).length > 0) cleaned[String(numericId)] = cleanFields;
     });
 
+    if (!canonicalRaw && legacyRaw) {
+      localStorage.setItem(CANONICAL_OVERRIDES_STORAGE_KEY, JSON.stringify(cleaned));
+    }
     return cleaned;
   } catch (_) {
-    localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(safeDefault));
+    localStorage.setItem(CANONICAL_OVERRIDES_STORAGE_KEY, JSON.stringify(safeDefault));
     toast('Saved company overrides were invalid and have been reset.');
     return safeDefault;
   }
 }
 
 function saveCompanyOverridesToStorage() {
-  localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(companyOverrides));
+  localStorage.setItem(CANONICAL_OVERRIDES_STORAGE_KEY, JSON.stringify(companyOverrides));
+}
+
+function loadDedupeDecisionsFromStorage() {
+  const safeDefault = { approved: {}, rejected: {}, manual: {} };
+  const raw = localStorage.getItem(DEDUPE_DECISIONS_STORAGE_KEY);
+  if (!raw) {
+    localStorage.setItem(DEDUPE_DECISIONS_STORAGE_KEY, JSON.stringify(safeDefault));
+    return safeDefault;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!isPlainObject(parsed)) throw new Error('Invalid dedupe decisions shape');
+    const cleaned = { approved: {}, rejected: {}, manual: {} };
+
+    DEDUPE_DECISION_BUCKETS.forEach(bucket => {
+      const bucketValue = parsed[bucket];
+      if (!isPlainObject(bucketValue)) return;
+      Object.entries(bucketValue).forEach(([id, value]) => {
+        const numericId = Number(id);
+        if (!Number.isInteger(numericId) || numericId <= 0) return;
+        if (bucket === 'manual') {
+          if (!isPlainObject(value)) return;
+          const cleanFields = Object.fromEntries(
+            Object.entries(value).filter(([field, fieldValue]) => {
+              if (typeof field !== 'string' || !field.trim()) return false;
+              return isAllowedOverrideValue(fieldValue);
+            })
+          );
+          if (Object.keys(cleanFields).length > 0) cleaned.manual[String(numericId)] = cleanFields;
+          return;
+        }
+        if (value === false || value === null || value === undefined) return;
+        if (value === true) cleaned[bucket][String(numericId)] = true;
+        else if (isPlainObject(value)) cleaned[bucket][String(numericId)] = value;
+      });
+    });
+
+    return cleaned;
+  } catch (_) {
+    localStorage.setItem(DEDUPE_DECISIONS_STORAGE_KEY, JSON.stringify(safeDefault));
+    toast('Saved dedupe decisions were invalid and have been reset.');
+    return safeDefault;
+  }
+}
+
+function saveDedupeDecisionsToStorage() {
+  localStorage.setItem(DEDUPE_DECISIONS_STORAGE_KEY, JSON.stringify(dedupeDecisions));
+}
+
+function getDedupeDecisionPatch(recordId) {
+  const recordKey = String(recordId);
+  const approved = dedupeDecisions.approved?.[recordKey];
+  const rejected = dedupeDecisions.rejected?.[recordKey];
+  const manual = dedupeDecisions.manual?.[recordKey];
+  const patch = {};
+
+  if (approved) patch.duplicate_status = 'approved';
+  if (rejected) patch.duplicate_status = 'rejected';
+  if (isPlainObject(approved)) Object.assign(patch, approved);
+  if (isPlainObject(rejected)) Object.assign(patch, rejected);
+  if (isPlainObject(manual)) Object.assign(patch, manual);
+  return patch;
 }
 
 function setIncludeScoringAuditExport(enabled) {
@@ -1831,11 +1906,12 @@ function getBaseRecordById(recordId) {
 }
 
 function buildEffectiveRecord(baseRecord) {
+  const dedupePatch = getDedupeDecisionPatch(baseRecord.id);
   const override = companyOverrides[String(baseRecord.id)] || {};
   const appliedOverride = Object.fromEntries(
     Object.entries(override).filter(([key]) => !OVERRIDE_AUDIT_FIELDS.includes(key))
   );
-  const effectiveRecord = { ...baseRecord, ...appliedOverride };
+  const effectiveRecord = { ...baseRecord, ...dedupePatch, ...appliedOverride };
   effectiveRecord.domain_key = computeDomainKey(effectiveRecord, { stripPort: true });
   return effectiveRecord;
 }
