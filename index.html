@@ -1241,6 +1241,35 @@
       </div>
 
       <div class="filter-section">
+        <div class="filter-label">Minimum Score</div>
+        <div class="range-labels">
+          <span>0</span>
+          <span id="scoreRangeValue">0+</span>
+          <span>100</span>
+        </div>
+        <input type="range" id="scoreRange" min="0" max="100" step="1" value="0" oninput="setMinScoreFilter(this.value)">
+      </div>
+
+      <div class="filter-section">
+        <div class="filter-label">Priority Tier <span class="count" id="cnt-tier">0</span></div>
+        <div class="chip-grid" id="chips-tier"></div>
+      </div>
+
+      <div class="filter-section">
+        <div class="filter-label">Revenue Segment <span class="count" id="cnt-revenue-segment">0</span></div>
+        <div class="chip-grid" id="chips-revenue-segment"></div>
+      </div>
+
+      <div class="filter-section">
+        <div class="filter-label">Quick Presets</div>
+        <div class="chip-grid">
+          <button type="button" class="chip" data-preset="strategic_p1" onclick="applyQuickPreset(this)">Strategic targets (P1)</button>
+          <button type="button" class="chip" data-preset="displacement" onclick="applyQuickPreset(this)">Displacement opportunities</button>
+          <button type="button" class="chip" data-preset="mid_market_growth" onclick="applyQuickPreset(this)">Mid-Market growth targets</button>
+        </div>
+      </div>
+
+      <div class="filter-section">
         <div class="filter-label">Prospect List Status</div>
         <div class="chip-grid">
           <button type="button" class="chip" id="chip-listed-any" data-listed="any" onclick="toggleListedFilter(this)">All</button>
@@ -1479,6 +1508,7 @@ function isListed(companyId) {
 
 const activeFilters = {
   search: '',
+  minScore: 0,
   role: new Set(),
   segment: new Set(),
   industry: new Set(),
@@ -1488,7 +1518,10 @@ const activeFilters = {
   adopter: new Set(),
   credit: new Set(),
   country: new Set(),
-  var_type: new Set()
+  var_type: new Set(),
+  tier: new Set(),
+  revenue_segment: new Set(),
+  quickPreset: ''
 };
 
 async function loadData() {
@@ -1817,6 +1850,8 @@ function buildFilterChips() {
   const countries = ['ENGLAND','SCOTLAND','WALES','NORTHERN IRELAND'];
   buildChips('chips-country', countries, 'country');
   buildChips('chips-var', ['VAR','White Label'], 'var_type');
+  buildChips('chips-tier', ['P1','P2','P3','P4'], 'tier');
+  buildChips('chips-revenue-segment', ['Enterprise','Mid-Market','SMB','Unknown'], 'revenue_segment');
 }
 
 function toggleChip(el) {
@@ -1830,16 +1865,75 @@ function toggleChip(el) {
     filterSet.add(val);
     el.classList.add('active');
   }
+  clearQuickPresetSelection();
   updateChipCounts();
   applyFilters();
   if (isMobileDrawerViewport()) closeSidebarDrawer();
+}
+
+function setMinScoreFilter(value) {
+  const score = Math.max(0, Math.min(100, Number(value) || 0));
+  activeFilters.minScore = score;
+  document.getElementById('scoreRangeValue').textContent = `${score}+`;
+  clearQuickPresetSelection();
+  applyFilters();
+}
+
+function clearQuickPresetSelection() {
+  activeFilters.quickPreset = '';
+  document.querySelectorAll('[data-preset]').forEach(c => c.classList.remove('active'));
+}
+
+function applyQuickPreset(el) {
+  const preset = el.dataset.preset;
+  const isSamePreset = activeFilters.quickPreset === preset;
+
+  clearFilters();
+  if (isSamePreset) return;
+
+  activeFilters.quickPreset = preset;
+  el.classList.add('active');
+
+  if (preset === 'strategic_p1') {
+    activeFilters.minScore = 80;
+    activeFilters.tier.add('P1');
+    activeFilters.revenue_segment.add('Enterprise');
+  } else if (preset === 'displacement') {
+    activeFilters.minScore = 60;
+    activeFilters.vendor.add('AVAYA');
+    activeFilters.vendor.add('MITEL');
+    activeFilters.vendor.add('BT');
+    activeFilters.tech.add('CCaaS');
+    activeFilters.tech.add('UCaaS');
+  } else if (preset === 'mid_market_growth') {
+    activeFilters.minScore = 50;
+    activeFilters.tier.add('P2');
+    activeFilters.tier.add('P3');
+    activeFilters.revenue_segment.add('Mid-Market');
+  }
+
+  document.getElementById('scoreRange').value = String(activeFilters.minScore);
+  document.getElementById('scoreRangeValue').textContent = `${activeFilters.minScore}+`;
+  syncChipStateFromFilters();
+  updateChipCounts();
+  applyFilters();
+  if (isMobileDrawerViewport()) closeSidebarDrawer();
+}
+
+function syncChipStateFromFilters() {
+  document.querySelectorAll('.chip[data-key]').forEach(chip => {
+    const key = chip.dataset.key;
+    const val = chip.dataset.val;
+    chip.classList.toggle('active', activeFilters[key]?.has(val));
+  });
 }
 
 function updateChipCounts() {
   const pairs = [
     ['cnt-role','role'],['cnt-segment','segment'],['cnt-industry','industry'],
     ['cnt-size','size'],['cnt-tech','tech'],['cnt-vendor','vendor'],
-    ['cnt-adopter','adopter'],['cnt-credit','credit'],['cnt-country','country'],['cnt-var','var_type']
+    ['cnt-adopter','adopter'],['cnt-credit','credit'],['cnt-country','country'],['cnt-var','var_type'],
+    ['cnt-tier','tier'],['cnt-revenue-segment','revenue_segment']
   ];
   pairs.forEach(([id, key]) => {
     const cnt = activeFilters[key].size;
@@ -1851,8 +1945,12 @@ function updateChipCounts() {
 
 function clearFilters() {
   activeFilters.search = '';
+  activeFilters.minScore = 0;
+  activeFilters.quickPreset = '';
   document.getElementById('searchInput').value = '';
-  Object.keys(activeFilters).forEach(k => { if (k !== 'search') activeFilters[k].clear(); });
+  document.getElementById('scoreRange').value = '0';
+  document.getElementById('scoreRangeValue').textContent = '0+';
+  Object.keys(activeFilters).forEach(k => { if (!['search', 'minScore', 'quickPreset'].includes(k)) activeFilters[k].clear(); });
   document.querySelectorAll('.chip.active').forEach(c => c.classList.remove('active'));
   listedFilter = 'any';
   document.querySelectorAll('[data-listed]').forEach(c => c.classList.remove('active'));
@@ -1894,6 +1992,11 @@ function applyFilters() {
       if (![...activeFilters.country].some(cc => c.includes(cc.split(' ')[0]))) return false;
     }
     if (activeFilters.var_type.size && !activeFilters.var_type.has(r.var_type)) return false;
+    const score = companyScoreMap.get(r.id) || r.prospectScore || computeProspectScore(r);
+    if ((score.totalScore ?? 0) < (activeFilters.minScore || 0)) return false;
+    if (activeFilters.tier.size && !activeFilters.tier.has(score.priorityTier || 'P4')) return false;
+    const revenueSegment = classifyRevenueBand(r.revenue);
+    if (activeFilters.revenue_segment.size && !activeFilters.revenue_segment.has(revenueSegment)) return false;
     // Listed status filter
     if (listedFilter === 'yes' && !isListed(r.id)) return false;
     if (listedFilter === 'no' && isListed(r.id)) return false;
