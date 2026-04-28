@@ -1277,6 +1277,7 @@
         <select class="select-sort" id="sortSelect" onchange="applyFilters()">
           <option value="name">Sort: Name A–Z</option>
           <option value="name_desc">Sort: Name Z–A</option>
+          <option value="totalScore">Sort: Total Score ↓</option>
           <option value="employees">Sort: Employees ↑</option>
           <option value="revenue">Sort: Revenue ↑</option>
           <option value="credit">Sort: Credit Score ↑</option>
@@ -1361,6 +1362,7 @@
 let allData = [];
 let filteredData = [];
 let selectedIds = new Set();
+let companyScoreMap = new Map();
 let activeOverlayCount = 0;
 
 function lockBodyScroll() {
@@ -1474,6 +1476,14 @@ async function loadData() {
   try {
     const data = await fetchExternalDataset();
     allData = normalizeDataset(data);
+    companyScoreMap = new Map(
+      allData.map(company => {
+        const score = computeProspectScore(company);
+        company.totalScore = score.totalScore;
+        company.prospectScore = score;
+        return [company.id, score];
+      })
+    );
     loadingEl.style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     document.getElementById('app').style.flexDirection = 'column';
@@ -1882,6 +1892,11 @@ function applyFilters() {
       va = a.name || ''; vb = b.name || '';
       const r = va.localeCompare(vb);
       return sortSel === 'name_desc' ? -r : r;
+    }
+    if (sortSel === 'totalScore') {
+      va = companyScoreMap.get(a.id)?.totalScore ?? a.totalScore ?? 0;
+      vb = companyScoreMap.get(b.id)?.totalScore ?? b.totalScore ?? 0;
+      return (vb - va);
     }
     if (sortSel === 'employees') {
       va = empMap[a.employees] ?? 99; vb = empMap[b.employees] ?? 99;
