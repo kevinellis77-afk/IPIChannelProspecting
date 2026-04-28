@@ -1833,6 +1833,22 @@ const roleColors = {
   'Vendor': 'badge-purple', 'Wholesaler': 'badge-orange', 'Consultant': 'badge-gold'
 };
 
+function classifyRevenueBand(revenue) {
+  if (revenue === null || revenue === undefined || revenue === '') return 'Unknown';
+
+  const normalized = typeof revenue === 'string'
+    ? revenue.replace(/[^0-9.-]/g, '')
+    : revenue;
+  const numericRevenue = Number(normalized);
+
+  if (!Number.isFinite(numericRevenue) || numericRevenue < 0) return 'Unknown';
+
+  const { enterpriseMin, midMarketMin } = SCORING_CONFIG.thresholds.revenueBands;
+  if (numericRevenue >= enterpriseMin) return 'Enterprise';
+  if (numericRevenue >= midMarketMin) return 'Mid-Market';
+  return 'SMB';
+}
+
 function renderTable() {
   const tbody = document.getElementById('tableBody');
   const toShow = filteredData.slice(0, pageShown);
@@ -1853,6 +1869,7 @@ function renderTable() {
     const roleClass = roleColors[r.channel_role] || 'badge-grey';
     const companyLists = getCompanyLists(r.id);
     const inList = companyLists.length > 0;
+    const revenueSegment = classifyRevenueBand(r.revenue);
 
     const tr = document.createElement('tr');
     if (sel) tr.classList.add('selected');
@@ -1894,8 +1911,8 @@ function renderTable() {
 
     const tdSeg = document.createElement('td');
     tdSeg.setAttribute('data-label', 'Segment');
-    tdSeg.title = r.channel_segment || '';
-    tdSeg.textContent = r.channel_segment ? r.channel_segment.replace('|', ' ') : '—';
+    tdSeg.title = revenueSegment;
+    tdSeg.textContent = revenueSegment;
     tr.appendChild(tdSeg);
 
     const tdEmp = document.createElement('td');
@@ -2177,7 +2194,7 @@ function renderDetailBody(r) {
 
   const companySection = mkSection('Company Details');
   addRow(companySection, 'Channel Role', r.channel_role || '—');
-  addRow(companySection, 'Segment', r.channel_segment || '—');
+  addRow(companySection, 'Segment', classifyRevenueBand(r.revenue));
   addRow(companySection, 'Industry', r.industry || '—');
   addRow(companySection, 'Employees', r.employees || '—');
   addRow(companySection, 'Founded', r.year_founded || '—');
