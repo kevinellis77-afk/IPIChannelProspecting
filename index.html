@@ -1496,11 +1496,102 @@
 // ============================================================
 // DATA LOADING
 // ============================================================
+let baseData = [];
 let allData = [];
 let filteredData = [];
 let selectedIds = new Set();
 let companyScoreMap = new Map();
 let activeOverlayCount = 0;
+
+const OVERRIDES_STORAGE_KEY = 'ukchannel_overrides';
+let companyOverrides = loadCompanyOverridesFromStorage();
+
+function isPlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function loadCompanyOverridesFromStorage() {
+  const safeDefault = {};
+  const raw = localStorage.getItem(OVERRIDES_STORAGE_KEY);
+  if (!raw) return safeDefault;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!isPlainObject(parsed)) throw new Error('Invalid overrides shape');
+
+    const cleaned = {};
+    Object.entries(parsed).forEach(([id, fields]) => {
+      if (!isPlainObject(fields)) return;
+      const numericId = Number(id);
+      if (!Number.isInteger(numericId) || numericId <= 0) return;
+      const cleanFields = Object.fromEntries(
+        Object.entries(fields).filter(([field]) => typeof field === 'string' && field.trim())
+      );
+      if (Object.keys(cleanFields).length > 0) cleaned[String(numericId)] = cleanFields;
+    });
+
+    return cleaned;
+  } catch (_) {
+    localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(safeDefault));
+    toast('Saved company overrides were invalid and have been reset.');
+    return safeDefault;
+  }
+}
+
+function saveCompanyOverridesToStorage() {
+  localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(companyOverrides));
+}
+
+function valuesEqual(a, b) {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((item, idx) => valuesEqual(item, b[idx]));
+  }
+  return a === b;
+}
+
+function getBaseRecordById(recordId) {
+  return baseData.find(r => r.id === recordId) || null;
+}
+
+function buildEffectiveRecord(baseRecord) {
+  const override = companyOverrides[String(baseRecord.id)] || {};
+  return { ...baseRecord, ...override };
+}
+
+function rebuildEffectiveDataAndScores() {
+  allData = baseData.map(buildEffectiveRecord);
+  companyScoreMap = new Map(
+    allData.map(company => {
+      const score = computeProspectScore(company);
+      company.totalScore = score.totalScore;
+      company.prospectScore = score;
+      return [company.id, score];
+    })
+  );
+}
+
+function saveRecordOverride(recordId, editedFields) {
+  const baseRecord = getBaseRecordById(recordId);
+  if (!baseRecord || !isPlainObject(editedFields)) return;
+
+  const existing = companyOverrides[String(recordId)] || {};
+  const nextOverride = { ...existing };
+
+  Object.entries(editedFields).forEach(([field, value]) => {
+    const baseValue = baseRecord[field];
+    if (valuesEqual(baseValue, value)) delete nextOverride[field];
+    else nextOverride[field] = value;
+  });
+
+  if (Object.keys(nextOverride).length > 0) companyOverrides[String(recordId)] = nextOverride;
+  else delete companyOverrides[String(recordId)];
+
+  saveCompanyOverridesToStorage();
+}
+
+function getEffectiveRecordById(recordId) {
+  return allData.find(r => r.id === recordId) || null;
+}
 
 function lockBodyScroll() {
   activeOverlayCount += 1;
@@ -1616,15 +1707,8 @@ async function loadData() {
 
   try {
     const data = await fetchExternalDataset();
-    allData = normalizeDataset(data);
-    companyScoreMap = new Map(
-      allData.map(company => {
-        const score = computeProspectScore(company);
-        company.totalScore = score.totalScore;
-        company.prospectScore = score;
-        return [company.id, score];
-      })
-    );
+    baseData = normalizeDataset(data);
+    rebuildEffectiveDataAndScores();
     loadingEl.style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     document.getElementById('app').style.flexDirection = 'column';
@@ -2651,8 +2735,6 @@ function applyEditErrors(errors) {
 
 function saveRecordEdits(recordId, event) {
   event.preventDefault();
-  const record = allData.find(r => r.id === recordId);
-  if (!record) return;
   const form = document.getElementById(`editForm_${recordId}`);
   if (!form) return;
 
@@ -2664,11 +2746,10 @@ function saveRecordEdits(recordId, event) {
     return;
   }
 
-  Object.assign(record, normalized);
-  const score = computeProspectScore(record);
-  record.totalScore = score.totalScore;
-  record.prospectScore = score;
-  companyScoreMap.set(record.id, score);
+  saveRecordOverride(recordId, normalized);
+  rebuildEffectiveDataAndScores();
+  const record = getEffectiveRecordById(recordId);
+  if (!record) return;
 
   buildFilterChips();
   applyFilters();
@@ -3108,7 +3189,7 @@ function renderEditCompanyForm(company) {
 }
 
 function openEditCompanyModal(companyId) {
-  const company = allData.find(d => d.id === companyId);
+  const company = getEffectiveRecordById(companyId);
   if (!company) return;
   const subtitle = document.getElementById('editCompanySubtitle');
   if (subtitle) subtitle.textContent = company.name || `Company ${company.id}`;
@@ -3125,33 +3206,38 @@ function saveEditedCompany(event) {
   event.preventDefault();
   const form = event.target;
   const companyId = Number(form.dataset.companyId);
-  const company = allData.find(d => d.id === companyId);
+  const company = getEffectiveRecordById(companyId);
   if (!company) return;
 
   const formData = new FormData(form);
+  const editedFields = {};
   EDIT_COMPANY_FIELDS.forEach(group => {
     group.fields.forEach(field => {
       const raw = String(formData.get(field.key) || '').trim();
       if (field.isArray) {
-        company[field.key] = raw ? raw.split(',').map(item => item.trim()).filter(Boolean) : [];
+        editedFields[field.key] = raw ? raw.split(',').map(item => item.trim()).filter(Boolean) : [];
         return;
       }
       if (field.type === 'number') {
         const parsed = raw === '' ? 0 : Number(raw);
-        company[field.key] = Number.isFinite(parsed) ? parsed : 0;
+        editedFields[field.key] = Number.isFinite(parsed) ? parsed : 0;
         return;
       }
-      company[field.key] = raw;
+      editedFields[field.key] = raw;
     });
   });
 
-  company.email = company.company_email;
-  companyScoreMap.set(company.id, computeProspectScore(company));
-  document.getElementById('modalTitle').textContent = company.name;
-  document.getElementById('modalSubtitle').textContent = `${company.industry || ''} ${company.city ? '· ' + company.city : ''} ${company.country ? '· ' + company.country : ''}`;
+  editedFields.email = editedFields.company_email;
+  saveRecordOverride(companyId, editedFields);
+  rebuildEffectiveDataAndScores();
+
+  const updatedCompany = getEffectiveRecordById(companyId);
+  if (!updatedCompany) return;
+  document.getElementById('modalTitle').textContent = updatedCompany.name;
+  document.getElementById('modalSubtitle').textContent = `${updatedCompany.industry || ''} ${updatedCompany.city ? '· ' + updatedCompany.city : ''} ${updatedCompany.country ? '· ' + updatedCompany.country : ''}`;
   closeEditCompanyModalDirect();
   applyFilters();
-  renderDetailBody(company);
+  renderDetailBody(updatedCompany);
   toast('Company updated');
 }
 
@@ -3192,7 +3278,7 @@ function addToListFromSidebar(companyId) {
   list.companyIds.push(companyId);
   saveLists();
   // Re-render detail panel in place
-  const r = allData.find(d => d.id === companyId);
+  const r = getEffectiveRecordById(companyId);
   if (r) renderDetailBody(r);
   toast(`Added to "${list.name}"`);
 }
@@ -3204,7 +3290,7 @@ function removeFromListById(listId, companyId) {
   list.companyIds = list.companyIds.filter(id => id !== companyId);
   saveLists();
   // Re-render detail panel in place
-  const r = allData.find(d => d.id === companyId);
+  const r = getEffectiveRecordById(companyId);
   if (r) renderDetailBody(r);
   renderLists();
   toast(`Removed from "${list.name}"`);
@@ -3315,7 +3401,7 @@ function renderLists() {
     return;
   }
   prospectLists.forEach(list => {
-    const companies = list.companyIds.map(id => allData.find(d => d.id === id)).filter(Boolean);
+    const companies = list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
     const card = document.createElement('div');
     card.className = 'prospect-list-card';
 
@@ -3523,21 +3609,21 @@ function exportHubspot() {
 
 function exportListCSV(listId) {
   const list = prospectLists.find(l => l.id === listId);
-  const companies = list.companyIds.map(id => allData.find(d => d.id === id)).filter(Boolean);
+  const companies = list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
   downloadCSV(`${list.name.replace(/[^a-z0-9]/gi,'_')}.csv`, buildCSVRows(companies));
   toast(`Exported "${list.name}"`);
 }
 
 function exportListHubspot(listId) {
   const list = prospectLists.find(l => l.id === listId);
-  const companies = list.companyIds.map(id => allData.find(d => d.id === id)).filter(Boolean);
+  const companies = list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
   downloadCSV(`${list.name.replace(/[^a-z0-9]/gi,'_')}_hubspot.csv`, buildHubspotRows(companies));
   toast(`HubSpot CSV: "${list.name}"`);
 }
 
 function mailtoList(listId) {
   const list = prospectLists.find(l => l.id === listId);
-  const companies = list.companyIds.map(id => allData.find(d => d.id === id)).filter(Boolean);
+  const companies = list.companyIds.map(id => getEffectiveRecordById(id)).filter(Boolean);
   const emails = companies.map(c => c.dir1_email || c.email).filter(e => e && e.includes('@'));
   if (emails.length === 0) { toast('No emails found in this list'); return; }
   const chunks = [];
