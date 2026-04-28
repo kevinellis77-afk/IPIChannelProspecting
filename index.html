@@ -1404,6 +1404,8 @@
         </select>
         <button class="btn" onclick="exportCSV('filtered')">⬇ Export Filtered</button>
         <button class="btn" onclick="exportHubspot()">⬇ HubSpot CSV</button>
+        <button class="btn" onclick="exportOverridesFile()">⬇ Overrides JSON</button>
+        <button class="btn" onclick="triggerOverridesImport()">⬆ Import Overrides</button>
       </div>
       <div class="table-wrap">
         <table>
@@ -1491,6 +1493,7 @@
 </div>
 
 <div class="toast" id="toast" aria-live="polite" role="status"></div>
+<input type="file" id="overridesImportInput" accept="application/json,.json" style="display:none" onchange="handleOverridesImportFile(event)">
 
 <script>
 // ============================================================
@@ -1504,8 +1507,10 @@ let companyScoreMap = new Map();
 let activeOverlayCount = 0;
 
 const OVERRIDES_STORAGE_KEY = 'ukchannel_overrides';
+const OVERRIDES_SCHEMA_VERSION = 1;
 const OVERRIDE_AUDIT_FIELDS = ['updated_at', 'updated_by', 'change_reason', 'source_note'];
 let companyOverrides = loadCompanyOverridesFromStorage();
+let pendingOverrideImportMode = 'merge';
 
 function isPlainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
@@ -1546,6 +1551,184 @@ function loadCompanyOverridesFromStorage() {
 
 function saveCompanyOverridesToStorage() {
   localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(companyOverrides));
+}
+
+function getAllowedOverrideFields() {
+  if (!Array.isArray(baseData) || baseData.length === 0) return new Set();
+  return new Set(Object.keys(baseData[0]).filter(key => key !== 'id'));
+}
+
+function isAllowedOverrideValue(value) {
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) {
+    return value.every(item => ['string', 'number', 'boolean'].includes(typeof item));
+  }
+  return ['string', 'number', 'boolean'].includes(typeof value);
+}
+
+function sanitizeOverridesPayload(rawOverrides) {
+  const cleaned = {};
+  const stats = {
+    acceptedRecords: 0,
+    skippedUnknownIds: 0,
+    skippedInvalidRecords: 0,
+    skippedUnknownFields: 0,
+    skippedInvalidValues: 0
+  };
+  if (!isPlainObject(rawOverrides)) return { valid: false, cleaned, stats, message: 'Overrides root must be an object keyed by numeric record IDs.' };
+
+  const validIds = new Set(baseData.map(record => String(record.id)));
+  const allowedFields = getAllowedOverrideFields();
+
+  Object.entries(rawOverrides).forEach(([id, fields]) => {
+    if (!isPlainObject(fields)) {
+      stats.skippedInvalidRecords += 1;
+      return;
+    }
+    if (!validIds.has(String(id))) {
+      stats.skippedUnknownIds += 1;
+      return;
+    }
+
+    const cleanFields = {};
+    Object.entries(fields).forEach(([field, value]) => {
+      if (typeof field !== 'string' || !field.trim()) return;
+      const isAudit = OVERRIDE_AUDIT_FIELDS.includes(field);
+      if (!isAudit && !allowedFields.has(field)) {
+        stats.skippedUnknownFields += 1;
+        return;
+      }
+      if (!isAllowedOverrideValue(value)) {
+        stats.skippedInvalidValues += 1;
+        return;
+      }
+      if (isAudit && !String(value).trim()) return;
+      cleanFields[field] = value;
+    });
+
+    if (Object.keys(cleanFields).length > 0) {
+      cleaned[String(id)] = cleanFields;
+      stats.acceptedRecords += 1;
+    } else {
+      stats.skippedInvalidRecords += 1;
+    }
+  });
+
+  return { valid: true, cleaned, stats, message: '' };
+}
+
+function applyImportedOverrides(importedOverrides, mode) {
+  if (mode === 'replace') return importedOverrides;
+
+  const merged = JSON.parse(JSON.stringify(companyOverrides || {}));
+  const conflicts = [];
+  Object.entries(importedOverrides).forEach(([recordId, importedFields]) => {
+    const existingFields = merged[recordId] || {};
+    Object.entries(importedFields).forEach(([field, value]) => {
+      if (field in existingFields && !valuesEqual(existingFields[field], value)) {
+        conflicts.push({ recordId, field });
+      }
+    });
+  });
+
+  let preferIncoming = true;
+  if (conflicts.length > 0) {
+    preferIncoming = window.confirm(
+      `Detected ${conflicts.length} field conflicts across ${new Set(conflicts.map(item => item.recordId)).size} companies.\n\n` +
+      'Press OK to apply imported values, or Cancel to keep your current values.'
+    );
+  }
+
+  Object.entries(importedOverrides).forEach(([recordId, importedFields]) => {
+    const existingFields = merged[recordId] || {};
+    Object.entries(importedFields).forEach(([field, value]) => {
+      const hasConflict = field in existingFields && !valuesEqual(existingFields[field], value);
+      if (!hasConflict || preferIncoming) existingFields[field] = value;
+    });
+    merged[recordId] = existingFields;
+  });
+
+  return merged;
+}
+
+function triggerOverridesImport() {
+  if (!baseData.length) {
+    toast('Dataset still loading. Try importing again in a moment.');
+    return;
+  }
+
+  const modeInput = window.prompt('Import mode: "merge" or "replace"', pendingOverrideImportMode);
+  if (modeInput === null) return;
+  const mode = String(modeInput || '').trim().toLowerCase();
+  if (!['merge', 'replace'].includes(mode)) {
+    toast('Import cancelled: choose "merge" or "replace".');
+    return;
+  }
+
+  pendingOverrideImportMode = mode;
+  const fileInput = document.getElementById('overridesImportInput');
+  fileInput.value = '';
+  fileInput.click();
+}
+
+function handleOverridesImportFile(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(String(reader.result || '{}'));
+      const payload = parsed && isPlainObject(parsed) && isPlainObject(parsed.overrides)
+        ? parsed.overrides
+        : parsed;
+
+      const validated = sanitizeOverridesPayload(payload);
+      if (!validated.valid) {
+        toast(`Import failed: ${validated.message}`);
+        return;
+      }
+      if (validated.stats.acceptedRecords === 0) {
+        toast('Import finished: no valid overrides found in file.');
+        return;
+      }
+
+      companyOverrides = applyImportedOverrides(validated.cleaned, pendingOverrideImportMode);
+      saveCompanyOverridesToStorage();
+      rebuildEffectiveDataAndScores();
+      applyFilters();
+
+      const mergeOrReplace = pendingOverrideImportMode === 'replace' ? 'replaced' : 'merged';
+      toast(
+        `Overrides ${mergeOrReplace}: ${validated.stats.acceptedRecords} records imported` +
+        (validated.stats.skippedUnknownIds ? `, ${validated.stats.skippedUnknownIds} unknown IDs skipped` : '') +
+        (validated.stats.skippedUnknownFields ? `, ${validated.stats.skippedUnknownFields} unknown fields skipped` : '')
+      );
+    } catch (err) {
+      toast('Import failed: invalid JSON file.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+
+function exportOverridesFile() {
+  const payload = {
+    schema_version: OVERRIDES_SCHEMA_VERSION,
+    exported_at: new Date().toISOString(),
+    source: 'UK Channel — Prospect Intelligence',
+    override_count: Object.keys(companyOverrides).length,
+    overrides: companyOverrides
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ukchannel_overrides_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${payload.override_count} override records`);
 }
 
 function valuesEqual(a, b) {
