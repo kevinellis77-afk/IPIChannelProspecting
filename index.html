@@ -1755,6 +1755,11 @@ const CONTENTIOUS_MERGE_FIELDS = [
   ['dir1_last', 'Primary Contact Last Name'],
   ['dir1_role', 'Primary Contact Role']
 ];
+const GENERIC_PARENT_DOMAINS = new Set([
+  'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
+  'wordpress.com', 'wixsite.com', 'blogspot.com', 'weebly.com', 'github.io',
+  'azurewebsites.net', 'herokuapp.com', 'notion.site', 'square.site'
+]);
 const CANONICAL_OVERRIDES_STORAGE_KEY = 'ukchannel_canonical_overrides';
 const LEGACY_OVERRIDES_STORAGE_KEY = 'ukchannel_overrides';
 const OVERRIDES_SCHEMA_VERSION = 1;
@@ -4558,6 +4563,68 @@ function normalizeComparisonValue(value) {
   return String(value).trim().toLowerCase();
 }
 
+function toTokenSet(value) {
+  return new Set(
+    String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(/\s+/)
+      .map(token => token.trim())
+      .filter(token => token && token.length > 2 && !['ltd', 'llp', 'limited', 'inc', 'group', 'solutions', 'services', 'technology', 'technologies'].includes(token))
+  );
+}
+
+function getLikelyParentDomain(hostname) {
+  const normalized = normalizeDomainValue(hostname, { stripPort: true });
+  if (!normalized) return '';
+  const labels = normalized.split('.').filter(Boolean);
+  if (labels.length <= 2) return normalized;
+  return labels.slice(-2).join('.');
+}
+
+function buildDuplicateRiskSignals(records) {
+  const countries = [...new Set(records.map(record => normalizeComparisonValue(record.country)).filter(Boolean))];
+  const industries = [...new Set(records.map(record => normalizeComparisonValue(record.industry)).filter(Boolean))];
+  const companyNames = records.map(record => String(record.name || '').trim()).filter(Boolean);
+
+  const riskSignals = [];
+
+  if (countries.length >= 2 && industries.length >= 2) {
+    riskSignals.push('Very different countries/industries');
+  }
+
+  if (industries.length >= 2) {
+    const tokenSets = industries.map(industry => toTokenSet(industry));
+    const hasSharedIndustryToken = tokenSets.some((setA, idxA) =>
+      tokenSets.some((setB, idxB) => idxA !== idxB && [...setA].some(token => setB.has(token)))
+    );
+    if (!hasSharedIndustryToken) riskSignals.push('Industries appear unrelated');
+  }
+
+  const parentDomain = getLikelyParentDomain(records[0]?.domain_key || records[0]?.domain || '');
+  if (parentDomain && GENERIC_PARENT_DOMAINS.has(parentDomain) && companyNames.length >= 2) {
+    const nameTokenSets = companyNames.map(name => toTokenSet(name));
+    const sharesNameTokens = nameTokenSets.some((setA, idxA) =>
+      nameTokenSets.some((setB, idxB) => idxA !== idxB && [...setA].some(token => setB.has(token)))
+    );
+    if (!sharesNameTokens) {
+      riskSignals.push(`Unrelated company names sharing generic parent domain (${parentDomain})`);
+    }
+  }
+
+  const lowConfidenceDomain = records.some(record => {
+    const rawDomain = String(record.domain || '').trim();
+    if (!record.domain_key) return true;
+    if (!rawDomain) return true;
+    if (/\s/.test(rawDomain)) return true;
+    if (/[/?#]/.test(rawDomain) && !/^https?:\/\//i.test(rawDomain)) return true;
+    return false;
+  });
+  if (lowConfidenceDomain) riskSignals.push('Missing or low-confidence domain parsing');
+
+  return riskSignals;
+}
+
 function collectDuplicateReviewGroups() {
   return duplicateCandidates
     .map(recordIds => {
@@ -4571,6 +4638,8 @@ function collectDuplicateReviewGroups() {
       const statuses = records.map(record => String(record.duplicate_status || '').toLowerCase());
       const hasMerged = statuses.some(status => ['merged', 'canonical'].includes(status));
       const hasRejected = statuses.every(status => status === 'rejected');
+      const riskSignals = buildDuplicateRiskSignals(records);
+      const needsManualReview = riskSignals.length > 0;
       let decision = 'defer';
       if (hasMerged) decision = 'merge';
       else if (hasRejected) decision = 'keep-separate';
@@ -4578,8 +4647,10 @@ function collectDuplicateReviewGroups() {
         domainKey: records[0].domain_key || records[0].domain || 'unknown-domain',
         records,
         conflicts,
+        riskSignals,
+        needsManualReview,
         decision,
-        lowConflict: conflicts.size <= 2
+        lowConflict: conflicts.size <= 2 && !needsManualReview
       };
     })
     .filter(Boolean)
@@ -4721,7 +4792,9 @@ function applyDuplicateGroupDecision(recordIds, decision, options = {}) {
 function autoMergeLowConflictGroups() {
   const groups = collectDuplicateReviewGroups().filter(group => group.lowConflict && group.decision === 'defer');
   if (!groups.length) {
-    toast('No low-conflict groups available for auto-merge');
+    const blockedCount = collectDuplicateReviewGroups().filter(group => group.decision === 'defer' && group.needsManualReview).length;
+    const suffix = blockedCount ? ` (${blockedCount} blocked: needs manual review)` : '';
+    toast(`No low-conflict groups available for auto-merge${suffix}`);
     return;
   }
   groups.forEach(group => {
@@ -4838,9 +4911,17 @@ function renderDuplicatesReview() {
     domain.textContent = group.domainKey;
     const meta = document.createElement('div');
     meta.className = 'duplicate-meta';
-    meta.textContent = `${group.records.length} records • ${group.conflicts.size} conflicting fields • Status: ${group.decision}`;
+    const manualLabel = group.needsManualReview ? 'Needs manual review' : group.decision;
+    meta.textContent = `${group.records.length} records • ${group.conflicts.size} conflicting fields • Status: ${manualLabel}`;
     left.appendChild(domain);
     left.appendChild(meta);
+    if (group.needsManualReview) {
+      const risk = document.createElement('div');
+      risk.className = 'duplicate-meta';
+      risk.style.color = '#fca5a5';
+      risk.textContent = `Risk signals: ${group.riskSignals.join(' · ')}`;
+      left.appendChild(risk);
+    }
     header.appendChild(left);
     card.appendChild(header);
 
@@ -4877,7 +4958,10 @@ function renderDuplicatesReview() {
     actions.className = 'duplicate-actions';
     const mergeBtn = document.createElement('button');
     mergeBtn.className = 'btn primary';
-    mergeBtn.textContent = 'Merge';
+    mergeBtn.textContent = group.needsManualReview ? 'Review & Merge' : 'Merge';
+    if (group.needsManualReview) {
+      mergeBtn.title = 'Risk signals detected; review conflict choices before merging.';
+    }
     mergeBtn.addEventListener('click', () => openMergeConflictModal(group));
     const keepBtn = document.createElement('button');
     keepBtn.className = 'btn';
