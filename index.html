@@ -1553,6 +1553,7 @@ function normalizeRecord(raw, idx) {
     revenue: asNumber(pick('revenue', 'Revenue')) ?? 0,
     credit_score: asNumber(pick('credit_score', 'Credit Score')) ?? 0,
     credit_description: asString(pick('credit_description', 'Credit Rating')),
+    year_founded: asNumber(pick('year_founded', 'Year Founded')),
     adopter_profile: asString(pick('adopter_profile', 'Adopter Profile')),
     var_type: asString(pick('var_type', 'VAR Type')),
     dir1_first: first,
@@ -1652,6 +1653,102 @@ const SCORING_CONFIG = {
     tier3: 40
   }
 };
+
+function clampScore(value, max) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return 0;
+  return Math.max(0, Math.min(max, numericValue));
+}
+
+function computeProspectScore(r) {
+  const dims = SCORING_CONFIG.maxPoints;
+  const reasons = [];
+  const subscores = {
+    revenue: 0,
+    employeeScale: 0,
+    creditQuality: 0,
+    partnerSignals: 0,
+    technologySignals: 0,
+    adoptionReadiness: 0
+  };
+  const normalizedPartners = Array.isArray(r.partners) ? r.partners.map(p => String(p || '').toUpperCase().trim()).filter(Boolean) : [];
+  const normalizedTech = Array.isArray(r.tech_stack) ? r.tech_stack.map(t => String(t || '').toLowerCase().trim()).filter(Boolean) : [];
+  const adopter = String(r.adopter_profile || '').toLowerCase();
+  const channelRole = String(r.channel_role || '').toLowerCase();
+  const channelSegment = String(r.channel_segment || '').toLowerCase();
+  const industry = String(r.industry || '').toLowerCase();
+  const country = String(r.country || '').toLowerCase();
+  const foundedYear = Number(r.year_founded);
+  const creditDescription = String(r.credit_description || '').toLowerCase();
+
+  if (r.revenue >= SCORING_CONFIG.thresholds.revenueBands.enterpriseMin) {
+    subscores.revenue = 30;
+    reasons.push('Enterprise revenue band');
+  } else if (r.revenue >= SCORING_CONFIG.thresholds.revenueBands.midMarketMin) {
+    subscores.revenue = 20;
+    reasons.push('Mid-market revenue band');
+  } else if (r.revenue > 0) {
+    subscores.revenue = 10;
+    reasons.push('SMB revenue band');
+  }
+
+  if (['5000+','1001-5000'].includes(r.employees)) subscores.employeeScale = 15;
+  else if (r.employees === '501-1000') subscores.employeeScale = 12;
+  else if (r.employees === '201-500') subscores.employeeScale = 10;
+  else if (r.employees === '51-200') subscores.employeeScale = 8;
+  else if (r.employees === '11-50') subscores.employeeScale = 6;
+  else if (['1-10','6-10','1-5'].includes(r.employees)) subscores.employeeScale = 4;
+  if (subscores.employeeScale >= 10) reasons.push('Larger employee base');
+
+  if (r.credit_score >= SCORING_CONFIG.thresholds.creditScore.excellentMin) subscores.creditQuality = 15;
+  else if (r.credit_score >= SCORING_CONFIG.thresholds.creditScore.goodMin) subscores.creditQuality = 11;
+  else if (r.credit_score >= SCORING_CONFIG.thresholds.creditScore.cautionMin) subscores.creditQuality = 6;
+  else if (r.credit_score > 0) subscores.creditQuality = 3;
+  if (creditDescription.includes('very good')) subscores.creditQuality += 2;
+  else if (creditDescription.includes('good')) subscores.creditQuality += 1;
+  if (subscores.creditQuality >= 12) reasons.push('Strong credit profile');
+
+  let partnerPoints = 0;
+  normalizedPartners.forEach(partner => {
+    partnerPoints += SCORING_CONFIG.signalMaps.vendor[partner] || 0;
+  });
+  if (channelRole === 'vendor') partnerPoints += 2;
+  if (channelSegment.includes('enterprise')) partnerPoints += 2;
+  subscores.partnerSignals = partnerPoints;
+  if (subscores.partnerSignals >= 8) reasons.push('High-value vendor partnerships');
+
+  let techPoints = 0;
+  Object.entries(SCORING_CONFIG.signalMaps.technology).forEach(([signal, pts]) => {
+    if (normalizedTech.some(t => t.includes(signal))) techPoints += pts;
+  });
+  if (industry.includes('telecom') || industry.includes('communication')) techPoints += 2;
+  subscores.technologySignals = techPoints;
+  if (subscores.technologySignals >= 8) reasons.push('Relevant modern tech stack');
+
+  if (adopter.includes('innovator')) subscores.adoptionReadiness += 10;
+  else if (adopter.includes('early adopter')) subscores.adoptionReadiness += 8;
+  else if (adopter.includes('early majority')) subscores.adoptionReadiness += 6;
+  else if (adopter.includes('late majority')) subscores.adoptionReadiness += 3;
+  else if (adopter.includes('sceptic')) subscores.adoptionReadiness += 1;
+  if (Number.isFinite(foundedYear) && foundedYear >= 2015) subscores.adoptionReadiness += 1;
+  if (country.includes('england')) subscores.adoptionReadiness += 1;
+  if (subscores.adoptionReadiness >= 8) reasons.push('High adoption readiness');
+
+  Object.keys(subscores).forEach(key => {
+    subscores[key] = clampScore(subscores[key], dims[key]);
+  });
+
+  const totalScore = clampScore(Object.values(subscores).reduce((sum, val) => sum + val, 0), 100);
+
+  let priorityTier = 'Tier 4';
+  if (totalScore >= SCORING_CONFIG.priorityTierCutoffs.tier1) priorityTier = 'Tier 1';
+  else if (totalScore >= SCORING_CONFIG.priorityTierCutoffs.tier2) priorityTier = 'Tier 2';
+  else if (totalScore >= SCORING_CONFIG.priorityTierCutoffs.tier3) priorityTier = 'Tier 3';
+
+  if (!reasons.length) reasons.push('Limited qualification signals');
+
+  return { totalScore, subscores, priorityTier, reasonCodes: reasons.slice(0, 5) };
+}
 
 const EMPLOYEE_ORDER = ['1-5','1-10','6-10','11-50','51-200','201-500','501-1000','1001-5000','5000+'];
 const CREDIT_ORDER = ['Very Good Creditworthiness','Good Creditworthiness','Creditworthy','Caution - Credit at your discretion','Not Scored'];
